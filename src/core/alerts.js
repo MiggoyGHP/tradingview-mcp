@@ -72,7 +72,14 @@ export async function create({ condition, price, message }) {
   return { success: !!created, price, condition, message: message || '(none)', price_set: !!priceSet, source: 'dom_fallback' };
 }
 
+/**
+ * SECURITY NOTE: This function contacts TradingView's servers directly.
+ * It sends an authenticated request to https://pricealerts.tradingview.com/list_alerts
+ * using the browser's session cookies (credentials: 'include'). This is the ONLY function
+ * in the codebase that makes an external network request. See SECURITY.md for details.
+ */
 export async function list() {
+  process.stderr.write('[alert_list] Contacting pricealerts.tradingview.com with session credentials\n');
   // Use pricealerts REST API — returns structured data with alert_id, symbol, price, conditions
   const result = await evaluateAsync(`
     fetch('https://pricealerts.tradingview.com/list_alerts', { credentials: 'include' })

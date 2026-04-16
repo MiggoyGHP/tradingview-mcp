@@ -87,7 +87,8 @@ registerTabTools(server);
 
 // Startup notice (stderr so it doesn't interfere with MCP stdio protocol)
 process.stderr.write('⚠  tradingview-mcp  |  Unofficial tool. Not affiliated with TradingView Inc. or Anthropic.\n');
-process.stderr.write('   Ensure your usage complies with TradingView\'s Terms of Use.\n\n');
+process.stderr.write('   Ensure your usage complies with TradingView\'s Terms of Use.\n');
+process.stderr.write('   CDP port 9222 has no authentication. Ensure it is bound to localhost only.\n\n');
 
 // Start stdio transport
 const transport = new StdioServerTransport();

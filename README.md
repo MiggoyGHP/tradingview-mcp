@@ -9,20 +9,20 @@ Personal AI assistant for your TradingView Desktop charts. Connects Claude Code 
 > **Requires a valid TradingView subscription.** This tool does not bypass or circumvent any TradingView paywall or access control. It reads from and controls the TradingView Desktop app already running on your machine.
 
 > [!NOTE]
-> **All data processing occurs locally on your machine.** No TradingView data is transmitted, stored, or redistributed externally by this tool.
+> **All chart interactions occur locally via Chrome DevTools Protocol on localhost:9222.** One exception: the `alert_list` tool fetches alert data from TradingView's servers (`pricealerts.tradingview.com`) using your existing browser session credentials. No other tools make external network requests.
 
 > [!CAUTION]
 > This tool accesses undocumented internal TradingView APIs via the Electron debug interface. These can change or break without notice in any TradingView update. Pin your TradingView Desktop version if stability matters to you.
 
 ## How It Works (and why it's safe to run)
 
-This tool does not connect to TradingView's servers, modify any TradingView files, or intercept any network traffic. It communicates exclusively with your locally running TradingView Desktop instance via Chrome DevTools Protocol (CDP) — a standard debugging interface built into all Chromium/Electron applications by Google, including VS Code, Slack, and Discord.
+This tool communicates with your locally running TradingView Desktop instance via Chrome DevTools Protocol (CDP) — a standard debugging interface built into all Chromium/Electron applications by Google, including VS Code, Slack, and Discord. It does not modify any TradingView files or intercept network traffic. One exception: the `alert_list` tool contacts `pricealerts.tradingview.com` using your existing session to retrieve your alert list.
 
 The debug port is disabled by default and must be explicitly enabled by you using a standard Chromium flag (`--remote-debugging-port=9222`). Nothing happens without that deliberate step.
 
 ## What This Tool Does Not Do
 
-- Connect to TradingView's servers or APIs
+- Connect to TradingView's servers or APIs (except `alert_list`, which fetches alerts from `pricealerts.tradingview.com`)
 - Store, transmit, or redistribute any market data
 - Work without a valid TradingView subscription and installed Desktop app
 - Bypass any TradingView paywall or access restriction
@@ -72,7 +72,9 @@ Gives your AI assistant eyes and hands on your own chart:
 
 Paste this into Claude Code and it will handle the rest:
 
-> Install the TradingView MCP server. Clone https://github.com/tradesdontlie/tradingview-mcp.git, run npm install, add it to my MCP config at ~/.claude/.mcp.json, and launch TradingView with the debug port. Then verify the connection with tv_health_check.
+> Install the TradingView MCP server. Clone https://github.com/MiggoyGHP/tradingview-mcp.git, run npm install, add it to my MCP config at ~/.claude/.mcp.json, and launch TradingView with the debug port. Then verify the connection with tv_health_check.
+
+> **Security Note:** This install prompt clones from this specific repository. Always verify the clone URL matches the repository you intend to use before running any one-click install prompt.
 
 Or follow the manual steps below.
 
@@ -81,7 +83,7 @@ Or follow the manual steps below.
 ### 1. Install
 
 ```bash
-git clone https://github.com/tradesdontlie/tradingview-mcp.git
+git clone https://github.com/MiggoyGHP/tradingview-mcp.git
 cd tradingview-mcp
 npm install
 ```
@@ -380,8 +382,8 @@ By using this software, you acknowledge and agree that:
    - Circumventing TradingView's access controls or subscription restrictions
    - Performing automated trading or algorithmic decision-making using extracted data
    - Violating the intellectual property rights of Pine Script indicator authors
-   - Connecting to TradingView's servers or infrastructure (all access is via the locally running Desktop app)
-5. The streaming functionality monitors your locally running TradingView Desktop instance only. It does not connect to TradingView's servers or extract data from TradingView's infrastructure.
+   - Connecting to TradingView's servers or infrastructure beyond what is documented (the `alert_list` tool contacts `pricealerts.tradingview.com`; all other access is via the locally running Desktop app)
+5. The streaming functionality monitors your locally running TradingView Desktop instance only. It does not connect to TradingView's servers or extract data from TradingView's infrastructure (the `alert_list` tool is the sole exception; see above).
 6. Market data accessed through this tool remains subject to exchange and data provider licensing terms. **Do not redistribute, store, or commercially exploit any data obtained through this tool.**
 7. This tool accesses internal, undocumented TradingView application interfaces that may change or break at any time without notice.
 

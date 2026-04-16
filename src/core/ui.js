@@ -2,6 +2,7 @@
  * Core UI automation logic.
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
+import { validateExpression, getEvaluateMode } from '../security/evaluate-filter.js';
 
 export async function click({ by, value }) {
   const escaped = JSON.stringify(value);
@@ -288,6 +289,21 @@ export async function findElement({ query, strategy }) {
 }
 
 export async function uiEvaluate({ expression }) {
-  const result = await evaluate(expression);
+  const mode = getEvaluateMode();
+
+  // Audit log to stderr (visible to MCP host, not on stdio transport)
+  process.stderr.write(`[ui_evaluate] mode=${mode} expr=${String(expression).substring(0, 200)}\n`);
+
+  if (mode === 'disabled') {
+    throw new Error('ui_evaluate is disabled via TV_MCP_ALLOW_UI_EVALUATE=disabled');
+  }
+
+  if (mode === 'filtered') {
+    validateExpression(expression);
+  } else {
+    process.stderr.write('[ui_evaluate] WARNING: running in unrestricted mode — no expression filtering applied\n');
+  }
+
+  const result = await evaluate(expression, { timeout: 10000 });
   return { success: true, result };
 }

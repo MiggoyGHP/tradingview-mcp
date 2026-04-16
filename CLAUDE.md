@@ -127,3 +127,14 @@ Claude Code ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ Trading
 ```
 
 Pine graphics path: `study._graphics._primitivesCollection.dwglines.get('lines').get(false)._primitivesDataById`
+
+## Security Controls
+
+- `ui_evaluate` is filtered by default — see `src/security/evaluate-filter.js`
+  - Set `TV_MCP_ALLOW_UI_EVALUATE=disabled` to block it entirely
+  - Set `TV_MCP_ALLOW_UI_EVALUATE=unrestricted` to bypass filtering (not recommended)
+- `alert_list` is the **only** tool that contacts external servers (`pricealerts.tradingview.com`)
+- CDP port 9222 must remain localhost-only — see `SECURITY.md` for details
+- Dependencies are pinned to exact versions (no `^` ranges) — see `package.json`
+- All string inputs sanitized via `safeString()` before CDP evaluation
+- All numeric inputs validated via `requireFinite()` before use

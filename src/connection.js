@@ -77,6 +77,12 @@ export async function connect() {
       await client.Page.enable();
       await client.DOM.enable();
 
+      // Security: log connection details and warn if not localhost
+      process.stderr.write(`[security] CDP connected on ${CDP_HOST}:${CDP_PORT}\n`);
+      if (CDP_HOST !== 'localhost' && CDP_HOST !== '127.0.0.1') {
+        process.stderr.write(`[security] WARNING: CDP_HOST is "${CDP_HOST}", not localhost. This may expose the debug port to your network.\n`);
+      }
+
       return client;
     } catch (err) {
       lastError = err;
