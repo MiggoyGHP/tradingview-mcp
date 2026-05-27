@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+78 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -39,7 +39,12 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `chart_set_type` → switch chart style (Candles, HeikinAshi, Line, Area, Renko, etc.)
 - `chart_manage_indicator` → add or remove studies (use full name: "Relative Strength Index", not "RSI")
 - `chart_scroll_to_date` → jump to a date (ISO format: "2025-01-15")
+- `chart_get_visible_range` → get current visible date range (unix timestamps) and bar count
 - `chart_set_visible_range` → zoom to exact date range (unix timestamps)
+- `indicator_set_inputs` → change indicator settings (length, source, period, etc.)
+- `indicator_toggle_visibility` → show or hide an indicator without removing it
+- `symbol_search` → search for symbols by name or keyword
+- `symbol_info` → get detailed metadata for the current symbol (exchange, type, description)
 
 ### "Work on Pine Script"
 1. `pine_set_source` → inject code into editor
@@ -50,6 +55,10 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 6. `pine_save` → save to TradingView cloud
 7. `pine_new` → create blank indicator/strategy/library
 8. `pine_open` → load a saved script by name
+9. `pine_list_scripts` → list all saved Pine scripts
+10. `pine_analyze` → static analysis WITHOUT compiling — catches array OOB, bad loop bounds, implicit bool casts (no chart connection needed)
+11. `pine_check` → server-side compile check via TradingView API without chart open — validates syntax/errors before injecting
+12. `pine_compile` → direct compile/add to chart (use `pine_smart_compile` for auto-detection)
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode
@@ -62,9 +71,22 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 ### "Screen multiple symbols"
 - `batch_run` with `symbols: ["ES1!", "NQ1!", "YM1!"]` and `action: "screenshot"` or `"get_ohlcv"`
 
+### "Get fundamental, news, or market depth data"
+- `data_get_fundamentals` → P/E, EPS, revenue, margins, debt, earnings date, sector (US stocks + PSX: prefix for Philippine stocks)
+- `data_get_news` → recent news headlines for the current symbol
+- `data_get_economic_calendar` → upcoming events: CPI, NFP, FOMC, GDP, etc. (filter by country, date range, impact level)
+- `data_get_holdings` → institutional/insider ownership %; ETF AUM
+- `depth_get` → order book / DOM (Depth of Market) data
+
+### "Analyze strategy results"
+- `data_get_strategy_results` → performance metrics from Strategy Tester (net profit, win rate, max DD, etc.)
+- `data_get_trades` → full trade list from Strategy Tester (up to 20 per request)
+- `data_get_equity` → equity curve data from Strategy Tester
+
 ### "Draw on the chart"
 - `draw_shape` → horizontal_line, trend_line, rectangle, text (pass point + optional point2)
 - `draw_list` → see what's drawn
+- `draw_get_properties` → get coordinates and properties of a specific drawing by entity ID
 - `draw_remove_one` → remove by ID
 - `draw_clear` → remove all
 
@@ -76,13 +98,38 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 ### "Navigate the UI"
 - `ui_open_panel` → open/close pine-editor, strategy-tester, watchlist, alerts, trading
 - `ui_click` → click buttons by aria-label, text, or data-name
-- `layout_switch` → load a saved layout by name
+- `ui_hover` → hover over an element (triggers tooltips/dropdowns)
+- `ui_keyboard` → press keyboard shortcuts (e.g., "Alt+S", "Ctrl+Z", "Escape")
+- `ui_type_text` → type text into the focused input/textarea
+- `ui_scroll` → scroll the chart or page up/down/left/right
+- `ui_mouse_click` → click at specific x,y pixel coordinates
+- `ui_find_element` → find elements by text, aria-label, or CSS selector and return positions
+- `layout_list` → list all saved chart layouts
+- `layout_switch` → load a saved layout by name or ID
 - `ui_fullscreen` → toggle fullscreen
 - `capture_screenshot` → take a screenshot (regions: "full", "chart", "strategy_tester")
+
+### "Manage tabs"
+- `tab_list` → list all open chart tabs
+- `tab_new` → open a new chart tab
+- `tab_switch` → switch to a tab by index
+- `tab_close` → close the current tab
+
+### "Manage panes"
+- `pane_list` → list all panes in the current layout with their symbols
+- `pane_focus` → focus a specific pane by index (0-based)
+- `pane_set_layout` → change the grid layout (e.g., single, 2h, 2v, 2x2, 3v)
+- `pane_set_symbol` → set the symbol on a specific pane by index
+
+### "Manage watchlist"
+- `watchlist_get` → get all symbols from the current watchlist with price, change, change%
+- `watchlist_add` → add a symbol to the watchlist
 
 ### "TradingView isn't running"
 - `tv_launch` → auto-detect and launch TradingView with CDP on Mac/Win/Linux
 - `tv_health_check` → verify connection is working
+- `tv_discover` → report which TradingView API paths are available (useful after TV updates)
+- `tv_ui_state` → snapshot of open panels, visible buttons, chart state, and replay status
 - **Standalone launcher** (Windows, no MCP needed): `.\launch-tradingview.ps1` at project root — kills existing TV, launches via COM activation (Windows Store) or direct spawn (classic installer), polls until CDP is ready, prints green/red status
 
 ## Context Management Rules
