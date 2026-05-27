@@ -2,7 +2,9 @@
  * Core health/discovery/launch logic.
  */
 import { getClient, getTargetInfo, evaluate } from '../connection.js';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { execSync, spawn } from 'child_process';
 
 export async function healthCheck() {
@@ -164,6 +166,26 @@ export async function launch({ port, kill_existing } = {}) {
   const killFirst = kill_existing !== false;
   const platform = process.platform;
 
+  let tvPath = null;
+  let tvPackageFamilyName = null;
+
+  // Approach A (Windows first): ApplicationActivationManager COM — the only correct
+  // activation path for Windows Store (AppX) apps. Direct spawn from Program Files\WindowsApps
+  // is blocked by the AppX sandbox regardless of arguments. Check this BEFORE path detection
+  // so a running process never steers us toward a WindowsApps path that can't accept args.
+  if (platform === 'win32') {
+    try {
+      const aumid = execSync(
+        "powershell.exe -NoProfile -Command \"(Get-StartApps | Where-Object { $_.Name -like '*TradingView*' } | Select-Object -First 1).AppID\"",
+        { timeout: 5000 }
+      ).toString().trim();
+      if (aumid) {
+        tvPackageFamilyName = aumid;
+        tvPath = '__APPX_COM__';
+      }
+    } catch { /* not a Store install, fall through to classic paths */ }
+  }
+
   const pathMap = {
     darwin: [
       '/Applications/TradingView.app/Contents/MacOS/TradingView',
@@ -183,17 +205,47 @@ export async function launch({ port, kill_existing } = {}) {
     ],
   };
 
-  let tvPath = null;
   const candidates = pathMap[platform] || pathMap.linux;
-  for (const p of candidates) {
-    if (p && existsSync(p)) { tvPath = p; break; }
+  if (!tvPath) {
+    for (const p of candidates) {
+      if (p && existsSync(p)) { tvPath = p; break; }
+    }
   }
 
   if (!tvPath) {
     try {
       const cmd = platform === 'win32' ? 'where TradingView.exe' : 'which tradingview';
-      tvPath = execSync(cmd, { timeout: 3000 }).toString().trim().split('\n')[0];
-      if (tvPath && !existsSync(tvPath)) tvPath = null;
+      const found = execSync(cmd, { timeout: 3000 }).toString().trim().split('\n')[0];
+      if (found && existsSync(found)) tvPath = found;
+    } catch { /* ignore */ }
+  }
+
+  // Approach B: read exe path from a running process — but only for non-AppX installs.
+  // If the path is inside WindowsApps the Store app is installed; we already handled
+  // that above via COM, so skip to avoid re-entering the blocked spawn path.
+  if (!tvPath && platform === 'win32') {
+    try {
+      const runningPath = execSync(
+        'powershell.exe -NoProfile -Command "try{(Get-Process TradingView -EA Stop|Select-Object -First 1).MainModule.FileName}catch{\'\'}"',
+        { timeout: 5000 }
+      ).toString().trim();
+      if (runningPath && runningPath.toLowerCase().endsWith('.exe')) {
+        if (runningPath.toLowerCase().includes('windowsapps')) {
+          // AppX install detected via running process — use COM activation
+          if (!tvPackageFamilyName) {
+            try {
+              const aumid = execSync(
+                "powershell.exe -NoProfile -Command \"(Get-StartApps | Where-Object { $_.Name -like '*TradingView*' } | Select-Object -First 1).AppID\"",
+                { timeout: 5000 }
+              ).toString().trim();
+              if (aumid) tvPackageFamilyName = aumid;
+            } catch { /* ignore */ }
+          }
+          tvPath = '__APPX_COM__';
+        } else {
+          tvPath = runningPath;
+        }
+      }
     } catch { /* ignore */ }
   }
 
@@ -219,10 +271,48 @@ export async function launch({ port, kill_existing } = {}) {
     } catch { /* may not be running */ }
   }
 
-  const child = spawn(tvPath, [`--remote-debugging-port=${cdpPort}`], { detached: true, stdio: 'ignore' });
-  child.unref();
+  let childPid = null;
+  const displayBinary = tvPath === '__APPX_COM__'
+    ? `${tvPackageFamilyName} (Windows Store)`
+    : tvPath;
 
-  for (let i = 0; i < 15; i++) {
+  if (tvPath === '__APPX_COM__') {
+    // Launch via ApplicationActivationManager COM API — the correct activation path for Windows Store
+    // (AppX) Electron apps. Add-Type requires multi-line C#, so we write a temp .ps1 file.
+    const safeAumid = tvPackageFamilyName.replace(/"/g, '');
+    const psScript = `Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class TvLauncher {
+    [DllImport("ole32.dll", PreserveSig = false)]
+    static extern void CoCreateInstance(ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext, ref Guid riid, out IntPtr ppv);
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("2e941141-7f97-4756-ba1d-9decde894a3d")]
+    interface IApplicationActivationManager {
+        int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string arguments, int options, out uint processId);
+    }
+    public static uint Launch(string aumid, string args) {
+        var clsid = new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C");
+        var iid  = new Guid("2e941141-7f97-4756-ba1d-9decde894a3d");
+        IntPtr ppv; CoCreateInstance(ref clsid, IntPtr.Zero, 1, ref iid, out ppv);
+        var mgr = (IApplicationActivationManager)Marshal.GetObjectForIUnknown(ppv);
+        uint launchPid; mgr.ActivateApplication(aumid, args, 0, out launchPid);
+        Marshal.Release(ppv); return launchPid;
+    }
+}
+'@
+Write-Output ([TvLauncher]::Launch("${safeAumid}", "--remote-debugging-port=${cdpPort}"))
+`;
+    const scriptPath = join(tmpdir(), 'tv_launch_cdp.ps1');
+    writeFileSync(scriptPath, psScript, 'utf8');
+    const out = execSync(`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { timeout: 15000 }).toString().trim();
+    childPid = parseInt(out, 10) || null;
+  } else {
+    const child = spawn(tvPath, [`--remote-debugging-port=${cdpPort}`], { detached: true, stdio: 'ignore' });
+    child.unref();
+    childPid = child.pid;
+  }
+
+  for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 1000));
     try {
       const http = await import('http');
@@ -236,7 +326,7 @@ export async function launch({ port, kill_existing } = {}) {
       if (ready) {
         const info = JSON.parse(ready);
         return {
-          success: true, platform, binary: tvPath, pid: child.pid,
+          success: true, platform, binary: displayBinary, pid: childPid,
           cdp_port: cdpPort, cdp_url: `http://localhost:${cdpPort}`,
           browser: info.Browser, user_agent: info['User-Agent'],
         };
@@ -245,7 +335,7 @@ export async function launch({ port, kill_existing } = {}) {
   }
 
   return {
-    success: true, platform, binary: tvPath, pid: child.pid, cdp_port: cdpPort, cdp_ready: false,
+    success: true, platform, binary: displayBinary, pid: childPid, cdp_port: cdpPort, cdp_ready: false,
     warning: 'TradingView launched but CDP not responding yet. It may still be loading. Try tv_health_check in a few seconds.',
   };
 }
