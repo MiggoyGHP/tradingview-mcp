@@ -83,4 +83,36 @@ export function registerDataTools(server) {
     try { return jsonResult(await core.getStudyValues()); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
+
+  server.tool('data_get_fundamentals', 'Get fundamental / Factset data for a symbol via TradingView screener API (P/E, EPS, revenue, margins, debt, earnings date, sector). Works for US stocks and Philippine stocks (PSX: prefix).', {
+    symbol: z.string().optional().describe('Symbol to look up (e.g. NASDAQ:AAPL, PSX:SM). Defaults to current chart symbol.'),
+  }, async ({ symbol }) => {
+    try { return jsonResult(await core.getFundamentals({ symbol })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_economic_calendar', 'Get upcoming economic calendar events from TradingView (CPI, NFP, FOMC, GDP, etc.). Filter by date range, countries, and impact level.', {
+    from: z.string().optional().describe('Start date ISO format (e.g. "2026-05-27"). Defaults to today.'),
+    to: z.string().optional().describe('End date ISO format (e.g. "2026-06-03"). Defaults to 7 days from now.'),
+    countries: z.array(z.string()).optional().describe('Country codes to filter (e.g. ["US", "EU", "PH", "JP"]). Omit for all.'),
+    impact: z.enum(['high', 'medium', 'low', 'all']).optional().describe('Minimum impact level filter. Defaults to all.'),
+  }, async ({ from, to, countries, impact }) => {
+    try { return jsonResult(await core.getEconomicCalendar({ from, to, countries, impact })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_holdings', 'Get ownership, institutional/insider holding percentages, and fund metadata for a symbol. For ETFs: shows AUM. For stocks: shows institutional/insider pct.', {
+    symbol: z.string().optional().describe('Symbol to look up (e.g. AMEX:SPY, NASDAQ:AAPL). Defaults to current chart symbol.'),
+  }, async ({ symbol }) => {
+    try { return jsonResult(await core.getHoldings({ symbol })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_news', 'Get recent news headlines for a symbol from TradingView news feed.', {
+    symbol: z.string().optional().describe('Symbol to get news for (e.g. NASDAQ:AAPL, PSX:SM). Defaults to current chart symbol.'),
+    count: z.coerce.number().optional().describe('Number of articles to return (default 20, max 100).'),
+  }, async ({ symbol, count }) => {
+    try { return jsonResult(await core.getNews({ symbol, count })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
 }

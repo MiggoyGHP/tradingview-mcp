@@ -452,3 +452,207 @@ export async function getPineBoxes({ study_filter, verbose } = {}) {
   });
   return { success: true, study_count: studies.length, studies };
 }
+
+// --- New data scrapers using TradingView REST APIs via browser fetch ---
+
+function resolveSymbolExpr(symbol) {
+  if (symbol) return `Promise.resolve(${safeString(symbol)})`;
+  return `(function() {
+    var c = window.TradingViewApi._activeChartWidgetWV.value();
+    return Promise.resolve(c.symbolExt().exchange + ':' + c.symbol());
+  })()`;
+}
+
+function screenerMarket(sym) {
+  if (/^PSX:/i.test(sym)) return 'global';
+  if (/^(NASDAQ:|NYSE:|AMEX:|CBOE:|BATS:)/i.test(sym)) return 'america';
+  return 'global';
+}
+
+export async function getFundamentals({ symbol } = {}) {
+  const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var sym = ${safeString(sym)};
+      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+      var market = /^PSX:/i.test(sym) ? 'global' : (/^(NASDAQ|NYSE|AMEX|CBOE|BATS):/i.test(sym) ? 'america' : 'global');
+      var url = host + '/' + market + '/scan';
+      var columns = [
+        'name','close','market_cap_calc','P.EARNINGS','Price_to_Book_ratio_FQ',
+        'EPS_Diluted_TTM','Revenue_Annual','Net_Income_Annual','Total_Debt_Annual',
+        'Dividends_Paid_Annual','EV_EBITDA','Return_on_Equity','Gross_Profit_Margin',
+        'Net_Income_Margin','Current_Ratio_Annual','Debt_Ratio_Annual',
+        'earnings_release_date_fq','sector','industry','exchange','type','description'
+      ];
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ symbols: { tickers: [sym] }, columns: columns })
+      });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch fundamentals');
+
+  const row = result.data?.[0]?.d;
+  if (!row) return { success: true, symbol: sym, fundamentals: null, message: 'No fundamental data available for this symbol' };
+
+  const keys = [
+    'name','price','market_cap','pe_ratio','pb_ratio','eps_ttm',
+    'revenue_annual','net_income_annual','total_debt','dividends_paid',
+    'ev_ebitda','roe','gross_margin','net_margin','current_ratio',
+    'debt_ratio','next_earnings_date','sector','industry','exchange','type','description'
+  ];
+  const fundamentals = {};
+  keys.forEach((k, i) => { fundamentals[k] = row[i] ?? null; });
+
+  return { success: true, symbol: sym, fundamentals };
+}
+
+export async function getEconomicCalendar({ from, to, countries, impact } = {}) {
+  const fromDate = from || new Date().toISOString().split('T')[0];
+  const toDate = to || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var baseUrl = window.ECONOMIC_CALENDAR_URL || 'https://economic-calendar.tradingview.com/';
+      var url = baseUrl + 'events?from=' + encodeURIComponent(${safeString(fromDate + 'T00:00:00.000Z')}) +
+                '&to=' + encodeURIComponent(${safeString(toDate + 'T23:59:59.999Z')});
+      var resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch economic calendar');
+
+  let events = Array.isArray(result) ? result : (result.result || result.events || []);
+
+  if (countries?.length) {
+    const ctrySet = new Set(countries.map(c => c.toUpperCase()));
+    events = events.filter(e => ctrySet.has((e.country || '').toUpperCase()));
+  }
+  if (impact && impact !== 'all') {
+    const minImp = { high: 3, medium: 2, low: 1 }[impact] || 0;
+    events = events.filter(e => (e.importance ?? 0) >= minImp);
+  }
+
+  return {
+    success: true,
+    from: fromDate,
+    to: toDate,
+    event_count: events.length,
+    events: events.map(e => ({
+      date: e.date,
+      time: e.time,
+      country: e.country,
+      name: e.title || e.name,
+      impact: e.importance === 3 ? 'high' : e.importance === 2 ? 'medium' : 'low',
+      actual: e.actual ?? null,
+      forecast: e.forecast ?? null,
+      previous: e.previous ?? null,
+      currency: e.currency ?? null,
+    })),
+  };
+}
+
+export async function getHoldings({ symbol } = {}) {
+  const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
+  const symType = await evaluateAsync(`(function() {
+    var c = window.TradingViewApi._activeChartWidgetWV.value();
+    return c.symbolExt().type || null;
+  })()`);
+
+  // Use screener to get available ETF/security metadata
+  const result = await evaluateAsync(`
+    (async function() {
+      var sym = ${safeString(sym)};
+      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+      var market = /^PSX:/i.test(sym) ? 'global' : (/^(NASDAQ|NYSE|AMEX|CBOE|BATS):/i.test(sym) ? 'america' : 'global');
+      var url = host + '/' + market + '/scan';
+      var columns = [
+        'name','type','description','sector','industry','market_cap_calc',
+        'assets_under_management','number_of_employees','exchange',
+        'shares_outstanding','float_shares_outstanding',
+        'institutional_holding','insider_holding'
+      ];
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ symbols: { tickers: [sym] }, columns: columns })
+      });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch holdings data');
+
+  const row = result.data?.[0]?.d;
+  if (!row) return { success: true, symbol: sym, holdings: null, message: 'No holdings data available' };
+
+  const [name, type, description, sector, industry, market_cap, aum, employees, exchange,
+    shares_outstanding, float_shares, institutional_pct, insider_pct] = row;
+
+  return {
+    success: true,
+    symbol: sym,
+    type: type || symType,
+    name,
+    description,
+    exchange,
+    sector,
+    industry,
+    ownership: {
+      market_cap,
+      assets_under_management: aum,
+      shares_outstanding,
+      float_shares,
+      institutional_holding_pct: institutional_pct,
+      insider_holding_pct: insider_pct,
+      employees,
+    },
+    note: 'For ETF individual holdings composition, open the Holdings panel in TradingView and use data_get_holdings_detail (coming soon).',
+  };
+}
+
+export async function getNews({ symbol, count = 20 } = {}) {
+  const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
+  const limit = Math.min(parseInt(count, 10) || 20, 100);
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var sym = ${safeString(sym)};
+      var base = window.NEWS_SERVICE_URL || 'https://news-headlines.tradingview.com';
+      var url = base + '/v2/view/asset/news?symbol=' + encodeURIComponent(sym) +
+                '&client=web&lang=en&section=symbol&limit=' + ${limit};
+      var resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch news');
+
+  const items = Array.isArray(result) ? result : (result.items || result.news || []);
+
+  return {
+    success: true,
+    symbol: sym,
+    count: items.length,
+    articles: items.map(n => ({
+      id: n.id || n.storyPath || null,
+      time: n.published || n.publishedAt || n.created_at || null,
+      title: n.title || null,
+      source: n.source || n.provider || null,
+      url: n.link || n.storyPath || null,
+      summary: n.shortDescription || n.description || null,
+      related_symbols: n.relatedSymbols || n.tickers || [],
+    })),
+  };
+}

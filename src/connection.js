@@ -2,8 +2,9 @@ import CDP from 'chrome-remote-interface';
 
 let client = null;
 let targetInfo = null;
-const CDP_HOST = 'localhost';
-const CDP_PORT = 9222;
+let effectivePort = null;
+const CDP_HOST = process.env.TV_MCP_CDP_HOST || 'localhost';
+const CDP_PORT = parseInt(process.env.TV_MCP_CDP_PORT || '9222', 10);
 const MAX_RETRIES = 5;
 const BASE_DELAY = 500;
 
@@ -70,7 +71,7 @@ export async function connect() {
         throw new Error('No TradingView chart target found. Is TradingView open with a chart?');
       }
       targetInfo = target;
-      client = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
+      client = await CDP({ host: CDP_HOST, port: effectivePort, target: target.id });
 
       // Enable required domains
       await client.Runtime.enable();
@@ -78,7 +79,7 @@ export async function connect() {
       await client.DOM.enable();
 
       // Security: log connection details and warn if not localhost
-      process.stderr.write(`[security] CDP connected on ${CDP_HOST}:${CDP_PORT}\n`);
+      process.stderr.write(`[security] CDP connected on ${CDP_HOST}:${effectivePort}\n`);
       if (CDP_HOST !== 'localhost' && CDP_HOST !== '127.0.0.1') {
         process.stderr.write(`[security] WARNING: CDP_HOST is "${CDP_HOST}", not localhost. This may expose the debug port to your network.\n`);
       }
@@ -94,12 +95,22 @@ export async function connect() {
 }
 
 async function findChartTarget() {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
-  // Prefer targets with tradingview.com/chart in the URL
-  return targets.find(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))
-    || targets.find(t => t.type === 'page' && /tradingview/i.test(t.url))
-    || null;
+  // Scan primary port first, then nearby ports — handles cases where TradingView
+  // picked a different debug port or was launched with a custom port.
+  const portsToScan = [CDP_PORT];
+  for (let i = 1; i <= 10; i++) portsToScan.push(CDP_PORT + i);
+
+  for (const port of portsToScan) {
+    try {
+      const resp = await fetch(`http://${CDP_HOST}:${port}/json/list`,
+        { signal: AbortSignal.timeout(800) });
+      const targets = await resp.json();
+      const t = targets.find(t => t.type === 'page' && /tradingview\.com\/chart/i.test(t.url))
+             || targets.find(t => t.type === 'page' && /tradingview/i.test(t.url));
+      if (t) { effectivePort = port; return t; }
+    } catch { /* port not open, try next */ }
+  }
+  return null;
 }
 
 export async function getTargetInfo() {

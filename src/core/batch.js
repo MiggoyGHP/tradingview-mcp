@@ -6,6 +6,7 @@ import { waitForChartReady } from '../wait.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { getFundamentals, getNews, getHoldings } from './data.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = join(dirname(dirname(__dirname)), 'screenshots');
@@ -71,6 +72,12 @@ export async function batchRun({ symbols, timeframes, action, delay_ms, ohlcv_co
               return { metric_count: Object.keys(metrics).length, metrics: metrics };
             })()
           `);
+        } else if (action === 'get_fundamentals') {
+          actionResult = await getFundamentals({ symbol });
+        } else if (action === 'get_news') {
+          actionResult = await getNews({ symbol, count: 5 });
+        } else if (action === 'get_holdings') {
+          actionResult = await getHoldings({ symbol });
         } else {
           actionResult = { error: 'Unknown action or API not available: ' + action };
         }
