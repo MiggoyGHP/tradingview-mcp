@@ -65,10 +65,12 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_pine_tables', 'Read table data drawn by Pine Script indicators (table.new). Returns formatted text rows per table. Use study_filter to target a specific indicator.', {
+  server.tool('data_get_pine_tables', 'Read table data drawn by Pine Script indicators (table.new). Returns formatted text rows per table. Use study_filter to target a specific indicator. If the indicator uses request.financial() the table may not exist immediately after compile — pass retries to auto-wait.', {
     study_filter: z.string().optional().describe('Substring to match study name. Omit for all.'),
-  }, async ({ study_filter }) => {
-    try { return jsonResult(await core.getPineTables({ study_filter })); }
+    retries: z.coerce.number().int().min(0).max(10).optional().describe('Retry count if study_count=0 (default 0). Each retry waits retry_delay_ms. Use 3–5 for request.financial() scripts.'),
+    retry_delay_ms: z.coerce.number().int().min(500).max(30000).optional().describe('Milliseconds between retries (default 3000).'),
+  }, async ({ study_filter, retries, retry_delay_ms }) => {
+    try { return jsonResult(await core.getPineTables({ study_filter, retries, retry_delay_ms })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

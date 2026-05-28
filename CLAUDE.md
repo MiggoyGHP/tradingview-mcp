@@ -83,9 +83,9 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 
 ### "Work on Pine Script"
 1. `pine_set_source` → inject code into editor
-2. `pine_smart_compile` → compile with auto-detection + error check
+2. `pine_smart_compile` → compile with auto-detection + error check (auto-dismisses "Save Script" dialog)
 3. `pine_get_errors` → read compilation errors
-4. `pine_get_console` → read log.info() output
+4. `pine_get_console` → read **compile-time** messages only (syntax errors, "Compiled. Added to chart."). **Does NOT reliably return runtime `log.info()` output** — use `table.new()` + `data_get_pine_tables` for runtime data instead.
 5. `pine_get_source` → read current code back (WARNING: can be very large for complex scripts)
 6. `pine_save` → save to TradingView cloud
 7. `pine_new` → create blank indicator/strategy/library
@@ -94,6 +94,46 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 10. `pine_analyze` → static analysis WITHOUT compiling — catches array OOB, bad loop bounds, implicit bool casts (no chart connection needed)
 11. `pine_check` → server-side compile check via TradingView API without chart open — validates syntax/errors before injecting
 12. `pine_compile` → direct compile/add to chart (use `pine_smart_compile` for auto-detection)
+
+### Pine Script v6 Gotchas (learned the hard way)
+
+**`max_tables` removed**: Don't pass `max_tables=N` to `indicator()` — that argument was removed in Pine Script v6. Drop it entirely.
+```pine
+// BAD — v6 compile error
+indicator("My Script", max_tables=1)
+// GOOD
+indicator("My Script")
+```
+
+**Newlines terminate statements**: A function call broken across lines causes `"end of line without line continuation"`. Build multi-part strings into a variable first, then pass the variable.
+```pine
+// BAD — newline inside log.info() causes parse error
+log.info("value: " + str.tostring(v1)
+         + " other: " + str.tostring(v2))
+// GOOD — build first, then call
+msg = "value: " + str.tostring(v1) + " other: " + str.tostring(v2)
+log.info(msg)
+```
+
+**Ternary can't return arrays**: The ternary `?:` operator does not support `array<float>` (or any array type) as a return value. Use separate if/else blocks or inline 5 separate code sections per symbol.
+```pine
+// BAD — compile error (ternary returning float[])
+arr = cond ? arr_a : arr_b
+// GOOD — use separate blocks
+if cond
+    process(arr_a)
+else
+    process(arr_b)
+```
+
+**`log.info()` output is not readable via MCP**: `pine_get_console` reads the Pine Editor DOM, not the runtime log panel. Use `table.new()` to write output to the chart and read it with `data_get_pine_tables`.
+
+**`data_get_pine_tables` needs time after compile**: Scripts using `request.financial()` make multiple async requests. `barstate.islast` (which triggers table rendering) only fires after all requests resolve — this can take 5–15 seconds. Pass `retries: 3, retry_delay_ms: 5000` to auto-wait:
+```
+data_get_pine_tables { study_filter: "My Script", retries: 3, retry_delay_ms: 5000 }
+```
+
+**Script slot renaming**: If the Pine Editor had a different script open (e.g. "Clock_RUT"), saving your new code under a new name reassigns that chart study slot to the old script's name. Fix: after `pine_smart_compile`, call `chart_get_state` to verify your indicator's actual entity ID before reading its output.
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode

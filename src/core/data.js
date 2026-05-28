@@ -519,9 +519,17 @@ export async function getPineLabels({ study_filter, max_labels, verbose } = {}) 
   return { success: true, study_count: studies.length, studies };
 }
 
-export async function getPineTables({ study_filter } = {}) {
+export async function getPineTables({ study_filter, retries = 0, retry_delay_ms = 3000 } = {}) {
   const filter = study_filter || '';
-  const raw = await evaluate(buildGraphicsJS('dwgtablecells', 'tableCells', filter));
+  let raw = await evaluate(buildGraphicsJS('dwgtablecells', 'tableCells', filter));
+
+  // Scripts using request.financial() take several seconds to resolve all calls before
+  // barstate.islast fires and table.new() is executed — retry if no data yet.
+  for (let attempt = 0; attempt < retries && (!raw || raw.length === 0); attempt++) {
+    await new Promise(r => setTimeout(r, retry_delay_ms));
+    raw = await evaluate(buildGraphicsJS('dwgtablecells', 'tableCells', filter));
+  }
+
   if (!raw || raw.length === 0) return { success: true, study_count: 0, studies: [] };
 
   const studies = raw.map(s => {

@@ -318,7 +318,23 @@ export async function compile() {
     await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
   }
 
-  await new Promise(r => setTimeout(r, 2000));
+  // Wait briefly, then dismiss any "Save Script" name dialog before continuing
+  await new Promise(r => setTimeout(r, 900));
+  await evaluate(`
+    (function() {
+      var btns = document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var text = btns[i].textContent.trim();
+        if ((text === 'Save' || text === 'OK') && btns[i].offsetParent !== null) {
+          var parent = btns[i].closest('[class*="dialog"], [class*="modal"], [class*="popup"], [role="dialog"]');
+          if (parent) { btns[i].click(); return true; }
+        }
+      }
+      return false;
+    })()
+  `);
+
+  await new Promise(r => setTimeout(r, 1200));
   return { success: true, button_clicked: clicked || 'keyboard_shortcut', source: 'dom_fallback' };
 }
 
@@ -472,7 +488,23 @@ export async function smartCompile() {
     await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
   }
 
-  await new Promise(r => setTimeout(r, 2500));
+  // Wait briefly, then dismiss any "Save Script" name dialog before checking results.
+  // Without dismissal the dialog blocks barstate.islast and the indicator never executes.
+  await new Promise(r => setTimeout(r, 900));
+  const dialogDismissed = await evaluate(`
+    (function() {
+      var btns = document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var text = btns[i].textContent.trim();
+        if ((text === 'Save' || text === 'OK') && btns[i].offsetParent !== null) {
+          var parent = btns[i].closest('[class*="dialog"], [class*="modal"], [class*="popup"], [role="dialog"]');
+          if (parent) { btns[i].click(); return true; }
+        }
+      }
+      return false;
+    })()
+  `);
+  await new Promise(r => setTimeout(r, dialogDismissed ? 2000 : 1600));
 
   const errors = await evaluate(`
     (function() {
@@ -576,6 +608,7 @@ export async function smartCompile() {
     has_errors: errors?.length > 0,
     errors: errors || [],
     study_added: studyAdded,
+    dialog_dismissed: dialogDismissed || false,
   };
 }
 
