@@ -6,6 +6,11 @@ register('status', {
   handler: () => core.healthCheck(),
 });
 
+register('dismiss-dialogs', {
+  description: 'Dismiss blocking TradingView modals (replay prompts, etc.)',
+  handler: () => core.dismissDialogs(),
+});
+
 register('launch', {
   description: 'Launch TradingView with CDP enabled',
   options: {

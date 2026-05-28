@@ -161,6 +161,19 @@ export async function uiState() {
   return { success: true, ...state };
 }
 
+export async function dismissDialogs() {
+  const { dismissBlockingDialogs } = await import('../wait.js');
+  const result = await dismissBlockingDialogs();
+  const actions = result?.actions ?? [];
+  return {
+    success: true,
+    actions_taken: actions,
+    message: actions.length > 0
+      ? `Dismissed ${actions.length} blocking dialog(s): ${actions.join(', ')}`
+      : 'No blocking dialogs found',
+  };
+}
+
 export async function launch({ port, kill_existing } = {}) {
   const cdpPort = port || 9222;
   const killFirst = kill_existing !== false;

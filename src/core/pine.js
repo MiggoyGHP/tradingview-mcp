@@ -65,10 +65,13 @@ export async function ensurePineEditorOpen() {
     })()
   `);
 
-  for (let i = 0; i < 50; i++) {
-    await new Promise(r => setTimeout(r, 200));
+  // Check-then-wait: check first so a synchronous activateScriptEditorTab() returns
+  // immediately rather than waiting a mandatory 200ms before the first probe.
+  // Poll up to 2s — if Monaco isn't visible by then the editor panel didn't open.
+  for (let i = 0; i < 10; i++) {
     const ready = await evaluate(`(function() { return ${FIND_MONACO} !== null; })()`);
     if (ready) return true;
+    await new Promise(r => setTimeout(r, 200));
   }
   return false;
 }

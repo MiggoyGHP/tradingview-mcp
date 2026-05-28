@@ -32,7 +32,11 @@ export async function batchRun({ symbols, timeframes, action, delay_ms, ohlcv_co
           else if (apiPath) await evaluate(`${apiPath}.setResolution(${safeString(tf)})`);
         }
 
-        await waitForChartReady(symbol);
+        const chartReady = await waitForChartReady(symbol);
+        if (!chartReady) {
+          results.push({ ...combo, success: false, error: 'Chart did not switch to requested symbol within timeout' });
+          continue;
+        }
         await new Promise(r => setTimeout(r, delay));
 
         let actionResult;

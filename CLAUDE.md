@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-78 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+79 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -130,6 +130,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `tv_health_check` → verify connection is working
 - `tv_discover` → report which TradingView API paths are available (useful after TV updates)
 - `tv_ui_state` → snapshot of open panels, visible buttons, chart state, and replay status
+- `tv_dismiss_dialogs` → dismiss blocking TradingView modals ("Continue your last replay?", "Leave current replay?") that silently stall chart ops — safe to call any time
 - **Standalone launcher** (Windows, no MCP needed): `.\launch-tradingview.ps1` at project root — kills existing TV, launches via COM activation (Windows Store) or direct spawn (classic installer), polls until CDP is ready, prints green/red status
 
 ## Context Management Rules

@@ -1,7 +1,7 @@
 {
   "name": "tradingview-mcp",
   "version": "1.0.0",
-  "description": "MCP bridge for TradingView Desktop via Chrome DevTools Protocol",
+  "description": "MCP bridge for TradingView Desktop via Chrome DevTools Protocol — 79 tools for AI-assisted chart analysis, Pine Script development, and replay practice",
   "type": "module",
   "main": "src/server.js",
   "bin": {
@@ -11,20 +11,58 @@
     ".": "./src/server.js",
     "./core": "./src/core/index.js"
   },
+  "files": [
+    "src/",
+    "scripts/launch_tv_debug*",
+    "launch-tradingview.ps1",
+    "CLAUDE.md",
+    "SETUP_GUIDE.md",
+    "SECURITY.md",
+    "RESEARCH.md",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node src/server.js",
     "tv": "node src/cli/index.js",
-    "test": "node --test tests/e2e.test.js tests/pine_analyze.test.js",
-    "test:e2e": "node --test tests/e2e.test.js",
+    "test": "node --test --test-timeout=60000 tests/e2e.test.js tests/pine_analyze.test.js",
+    "test:e2e": "node --test --test-timeout=60000 tests/e2e.test.js",
     "test:unit": "node --test tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js",
     "test:cli": "node --test tests/cli.test.js",
-    "test:all": "node --test tests/e2e.test.js tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js",
+    "test:all": "node --test --test-timeout=60000 tests/e2e.test.js tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js",
     "audit": "npm audit --audit-level=high",
-    "test:verbose": "node --test --test-reporter=spec tests/e2e.test.js tests/pine_analyze.test.js",
-    "test:count": "node --test --test-reporter=spec tests/e2e.test.js 2>&1 | tail -5"
+    "test:verbose": "node --test --test-reporter=spec --test-timeout=60000 tests/e2e.test.js tests/pine_analyze.test.js",
+    "test:count": "node --test --test-reporter=spec --test-timeout=60000 tests/e2e.test.js 2>&1 | tail -5",
+    "bench": "node scripts/bench.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tradingview",
+    "claude",
+    "claude-code",
+    "chrome-devtools-protocol",
+    "cdp",
+    "pine-script",
+    "trading",
+    "automation",
+    "ai-tools"
+  ],
+  "author": "tradesdontlie",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MiggoyGHP/tradingview-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MiggoyGHP/tradingview-mcp/issues"
+  },
+  "homepage": "https://github.com/MiggoyGHP/tradingview-mcp#readme",
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chrome-remote-interface": "0.33.2",
     "zod": "^3.25.76"
   }

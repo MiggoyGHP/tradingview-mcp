@@ -18,6 +18,11 @@ export function registerHealthTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
+  server.tool('tv_dismiss_dialogs', 'Dismiss blocking TradingView modal dialogs (e.g. "Continue your last replay?" or "Leave current replay?") that silently stall chart operations. Safe to call any time — returns actions_taken list.', {}, async () => {
+    try { return jsonResult(await core.dismissDialogs()); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
   server.tool('tv_launch', 'Launch TradingView Desktop with Chrome DevTools Protocol (remote debugging) enabled. Auto-detects install location on Mac, Windows, and Linux.', {
     port: z.coerce.number().optional().describe('CDP port (default 9222)'),
     kill_existing: z.coerce.boolean().optional().describe('Kill existing TradingView instances first (default true)'),

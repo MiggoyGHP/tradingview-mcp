@@ -45,12 +45,34 @@ export async function openPanel({ panel, action }) {
         if (panel === 'pine-editor') { var monacoEl = document.querySelector('.monaco-editor.pine-editor-monaco'); isOpen = isOpen && !!monacoEl; }
         if (panel === 'strategy-tester') { var stratPanel = document.querySelector('[data-name="backtesting"]') || document.querySelector('[class*="strategyReport"]'); isOpen = isOpen && !!(stratPanel && stratPanel.offsetParent); }
         var performed = 'none';
+        // TradingView refactored bottomWidgetBar: showWidget/hideWidget were removed.
+        // New API: activateScriptEditorTab(), _activeWidget.setValue(name), show(), hide(), open()/close() (minimize).
+        // Fall back to the old method names so this still works on older TradingView builds.
+        function activateWidget(name) {
+          if (name === 'pine-editor' && typeof bwb.activateScriptEditorTab === 'function') {
+            bwb.activateScriptEditorTab(); return true;
+          }
+          if (bwb._activeWidget && typeof bwb._activeWidget.setValue === 'function') {
+            bwb._activeWidget.setValue(name); return true;
+          }
+          if (typeof bwb.showWidget === 'function') { bwb.showWidget(name); return true; }
+          return false;
+        }
+        function showBar() {
+          if (typeof bwb.show === 'function') bwb.show();
+          if (typeof bwb.open === 'function') bwb.open();
+        }
+        function hideBar(name) {
+          if (typeof bwb.hide === 'function') { bwb.hide(); return true; }
+          if (typeof bwb.hideWidget === 'function') { bwb.hideWidget(name); return true; }
+          return false;
+        }
         if (action === 'open' || (action === 'toggle' && !isOpen)) {
-          if (panel === 'pine-editor') { if (typeof bwb.activateScriptEditorTab === 'function') bwb.activateScriptEditorTab(); else if (typeof bwb.showWidget === 'function') bwb.showWidget(widgetName); }
-          else { if (typeof bwb.showWidget === 'function') bwb.showWidget(widgetName); }
+          activateWidget(widgetName);
+          showBar();
           performed = 'opened';
         } else if (action === 'close' || (action === 'toggle' && isOpen)) {
-          if (typeof bwb.hideWidget === 'function') bwb.hideWidget(widgetName);
+          hideBar(widgetName);
           performed = 'closed';
         }
         return { was_open: isOpen, performed: performed };

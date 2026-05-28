@@ -99,8 +99,47 @@ export async function stop({ _deps } = {}) {
   if (!started) {
     return { success: true, action: 'already_stopped' };
   }
-  await evaluate(`${rp}.stopReplay()`);
-  return { success: true, action: 'replay_stopped' };
+  // Primary: stopReplay() — works in healthy state and updates the WatchedValue
+  // synchronously. Also hide the toolbar so the chart UI doesn't dangle.
+  await evaluate(`(function(){ var rp = ${rp}; try { rp.stopReplay(); } catch(e){} try { rp.hideReplayToolbar(); } catch(e){} })()`);
+
+  // Verify — TradingView's WatchedValue update can lag a tick.
+  let stillStarted = await evaluate(wv(`${rp}.isReplayStarted()`));
+  for (let i = 0; i < 10 && stillStarted; i++) {
+    await new Promise(r => setTimeout(r, 150));
+    stillStarted = await evaluate(wv(`${rp}.isReplayStarted()`));
+  }
+  if (!stillStarted) return { success: true, action: 'replay_stopped' };
+
+  // Fallback: API didn't fully exit (happens if replay session is in a degraded
+  // state, e.g. after a CDP-disconnect mid-replay). Click the toolbar Replay
+  // toggle; if it triggers the "Leave current replay?" modal, auto-dismiss it.
+  const clicked = await evaluate(`
+    (function() {
+      var btn = Array.from(document.querySelectorAll('button[aria-label="Bar replay"]'))
+        .find(function(b) { return (b.textContent || '').trim() === 'Replay'; });
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()
+  `);
+  if (clicked) {
+    // Give the modal time to render, then dismiss it (Leave + uncheck Save).
+    await new Promise(r => setTimeout(r, 400));
+    try {
+      const { dismissBlockingDialogs } = await import('../wait.js');
+      await dismissBlockingDialogs();
+    } catch { /* best-effort */ }
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      stillStarted = await evaluate(wv(`${rp}.isReplayStarted()`));
+      if (!stillStarted) break;
+    }
+  }
+
+  return stillStarted
+    ? { success: false, action: 'stop_failed', warning: 'Replay state did not exit. Restart TradingView Desktop to recover.' }
+    : { success: true, action: 'replay_stopped_via_ui_fallback' };
 }
 
 export async function trade({ action, _deps }) {

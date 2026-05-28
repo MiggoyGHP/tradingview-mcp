@@ -120,14 +120,37 @@ export async function getTargetInfo() {
   return targetInfo;
 }
 
+// Default per-CDP-call timeout. Without this, a TradingView async API that
+// never resolves can hang an MCP tool call forever (Claude waits indefinitely).
+// Tune with TV_MCP_EVAL_TIMEOUT_MS. Pass opts.timeoutMs to override per call.
+const EVAL_TIMEOUT_MS = Number(process.env.TV_MCP_EVAL_TIMEOUT_MS || 30000);
+
 export async function evaluate(expression, opts = {}) {
   const c = await getClient();
-  const result = await c.Runtime.evaluate({
+  // Destructure known non-CDP fields so they don't pollute the protocol message.
+  // Safety fields (returnByValue, expression) come AFTER the spread so callers
+  // cannot accidentally override them.
+  const { timeoutMs: _t, awaitPromise, ...cdpOpts } = opts;
+  const evalPromise = c.Runtime.evaluate({
+    ...cdpOpts,
     expression,
     returnByValue: true,
-    awaitPromise: opts.awaitPromise ?? false,
-    ...opts,
+    awaitPromise: awaitPromise ?? false,
   });
+  const timeoutMs = opts.timeoutMs ?? EVAL_TIMEOUT_MS;
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`CDP evaluate timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  let result;
+  try {
+    result = await Promise.race([evalPromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
   if (result.exceptionDetails) {
     const msg = result.exceptionDetails.exception?.description
       || result.exceptionDetails.text
