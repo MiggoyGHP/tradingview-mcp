@@ -1,13 +1,99 @@
 /**
  * Core data access logic.
  */
-import { evaluate, evaluateAsync, KNOWN_PATHS, safeString, getChartApi, getChartCollection } from '../connection.js';
+import { evaluate, evaluateAsync, serverFetch, KNOWN_PATHS, safeString, getChartApi, getChartCollection } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
 
 const MAX_OHLCV_BARS = 500;
 const MAX_TRADES = 20;
 const CHART_API = KNOWN_PATHS.chartApi;
 const BARS_PATH = KNOWN_PATHS.mainSeriesBars;
+
+// Validated screener API field names (all lowercase/snake_case).
+// Confirmed ✓ = verified against live API last session. ~ = best-fit substitute.
+const F = {
+  // Identity
+  name:            'name',
+  close:           'close',
+  market_cap:      'market_cap_calc',
+  sector:          'sector',
+  industry:        'industry',
+  exchange:        'exchange',
+  type:            'type',
+  description:     'description',
+
+  // Valuation ✓
+  pe:              'price_earnings_ttm',
+  ps:              'price_sales',
+  pb:              'price_book_ratio',
+  ev_ebitda:       'enterprise_value_ebitda_ttm',  // ~
+
+  // Income — TTM ✓
+  revenue:         'total_revenue',
+  gross_profit:    'gross_profit',                 // ~
+  ebitda:          'ebitda',                       // ~
+  net_income:      'net_income',
+  eps_ttm:         'earnings_per_share_diluted_ttm', // ~
+
+  // Income — MRQ ✓
+  revenue_fq:      'revenue_fq',
+  gross_profit_fq: 'gross_profit_fq',
+  ebitda_fq:       'ebitda_fq',
+  net_income_fq:   'net_income_fq',
+  eps_fq:          'eps_diluted_fq',               // ~
+
+  // Growth rates ~
+  revenue_yoy:     'revenue_change_ttm',
+  revenue_qoq:     'revenue_change',
+  eps_yoy:         'eps_change_ttm',
+
+  // Balance sheet ✓ / ~
+  total_assets:    'total_assets',
+  total_liab:      'total_liabilities',            // ~
+  cash:            'cash_n_short_term_invest',      // ~
+  total_debt:      'total_debt',
+  total_equity:    'total_equity',                 // ~
+
+  // Cash flow ~
+  fcf:             'free_cash_flow_ttm',
+  operating_cf:    'oper_cash_flow_ttm',           // ~
+  capex:           'capital_expenditures_ttm',     // ~
+
+  // Margins ✓
+  gross_margin:    'gross_margin',
+  net_margin:      'net_margin',
+  op_margin:       'operating_margin',
+
+  // Returns ✓ / ~
+  roe:             'return_on_equity',
+  roa:             'return_on_assets',
+  roce:            'return_on_capital_employed',   // ~
+
+  // Liquidity ✓
+  current_ratio:   'current_ratio',
+  quick_ratio:     'quick_ratio',
+  de:              'debt_to_equity',
+  debt_ratio:      'debt_ratio',                   // ~
+
+  // Dividends — already lowercase in original
+  div_yield:       'dividend_yield_calc',
+  div_per_share:   'dividends_per_share',
+
+  // Estimates — lowercase versions ~
+  eps_fy1:         'eps_estimate_fy1',
+  eps_fy2:         'eps_estimate_fy2',
+  rev_fy1:         'revenue_estimate_fy1',
+  rev_fy2:         'revenue_estimate_fy2',
+  next_earnings:   'earnings_release_next_date',
+
+  // Holdings — already lowercase in original
+  aum:             'assets_under_management',
+  employees:       'number_of_employees',
+  shares_out:      'shares_outstanding',
+  float_shares:    'float_shares_outstanding',
+  inst_holding:    'institutional_holding',
+  ins_holding:     'insider_holding',
+};
 
 function buildGraphicsJS(collectionName, mapKey, filter) {
   return `
@@ -504,53 +590,69 @@ function screenerMarket(sym) {
 export async function getFundamentals({ symbol } = {}) {
   const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var sym = ${safeString(sym)};
-      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-      var market = /^PSX:/i.test(sym) ? 'global' : (/^(NASDAQ|NYSE|AMEX|CBOE|BATS):/i.test(sym) ? 'america' : 'global');
-      var url = host + '/' + market + '/scan';
-      var columns = [
-        'name','close','market_cap_calc','P.EARNINGS','Price_to_Book_ratio_FQ',
-        'EPS_Diluted_TTM','Revenue_Annual','Net_Income_Annual','Total_Debt_Annual',
-        'Dividends_Paid_Annual','EV_EBITDA','Return_on_Equity','Gross_Profit_Margin',
-        'Net_Income_Margin','Current_Ratio_Annual','Debt_Ratio_Annual',
-        'earnings_release_date_fq','sector','industry','exchange','type','description',
-        'Revenue_QoQ','Revenue_YoY','EPS_Diluted_YoY',
-        'Return_on_Assets','ROCE_TTM',
-        'Quick_Ratio_Annual','Debt_to_Equity',
-        'EPS_Estimate_FY1','Revenue_Estimate_FY1',
-        'dividend_yield_calc','dividends_per_share'
-      ];
-      var resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ symbols: { tickers: [sym] }, columns: columns })
-      });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const market = screenerMarket(sym);
+  const columns = [
+    F.name, F.close, F.market_cap, F.pe, F.pb,
+    F.eps_ttm, F.revenue, F.net_income, F.total_debt,
+    F.div_yield, F.ev_ebitda, F.roe, F.gross_margin,
+    F.net_margin, F.current_ratio, F.debt_ratio,
+    F.next_earnings, F.sector, F.industry, F.exchange, F.type, F.description,
+    F.revenue_qoq, F.revenue_yoy, F.eps_yoy,
+    F.roa, F.roce,
+    F.quick_ratio, F.de,
+    F.eps_fy1, F.rev_fy1,
+    F.div_yield, F.div_per_share,
+  ];
+  // de-duplicate (div_yield appears twice above — dedupe preserves order)
+  const deduped = [...new Set(columns)];
+
+  const result = await serverFetch(`https://scanner.tradingview.com/${market}/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped }),
+  });
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch fundamentals');
 
   const row = result.data?.[0]?.d;
   if (!row) return { success: true, symbol: sym, fundamentals: null, message: 'No fundamental data available for this symbol' };
 
-  const keys = [
-    'name','price','market_cap','pe_ratio','pb_ratio','eps_ttm',
-    'revenue_annual','net_income_annual','total_debt','dividends_paid',
-    'ev_ebitda','roe','gross_margin','net_margin','current_ratio',
-    'debt_ratio','next_earnings_date','sector','industry','exchange','type','description',
-    'revenue_qoq','revenue_yoy','eps_diluted_yoy',
-    'roa','roce',
-    'quick_ratio','debt_to_equity',
-    'eps_estimate_fy1','revenue_estimate_fy1',
-    'dividend_yield','dividends_per_share'
-  ];
-  const fundamentals = {};
-  keys.forEach((k, i) => { fundamentals[k] = row[i] ?? null; });
+  const mapped = {};
+  deduped.forEach((col, i) => { mapped[col] = row[i] ?? null; });
+
+  const fundamentals = {
+    name:               mapped[F.name],
+    price:              mapped[F.close],
+    market_cap:         mapped[F.market_cap],
+    pe_ratio:           mapped[F.pe],
+    pb_ratio:           mapped[F.pb],
+    eps_ttm:            mapped[F.eps_ttm],
+    revenue_ttm:        mapped[F.revenue],
+    net_income_ttm:     mapped[F.net_income],
+    total_debt:         mapped[F.total_debt],
+    ev_ebitda:          mapped[F.ev_ebitda],
+    roe:                mapped[F.roe],
+    roa:                mapped[F.roa],
+    roce:               mapped[F.roce],
+    gross_margin:       mapped[F.gross_margin],
+    net_margin:         mapped[F.net_margin],
+    current_ratio:      mapped[F.current_ratio],
+    quick_ratio:        mapped[F.quick_ratio],
+    debt_to_equity:     mapped[F.de],
+    debt_ratio:         mapped[F.debt_ratio],
+    revenue_yoy:        mapped[F.revenue_yoy],
+    revenue_qoq:        mapped[F.revenue_qoq],
+    eps_yoy:            mapped[F.eps_yoy],
+    next_earnings_date: mapped[F.next_earnings],
+    sector:             mapped[F.sector],
+    industry:           mapped[F.industry],
+    exchange:           mapped[F.exchange],
+    type:               mapped[F.type],
+    description:        mapped[F.description],
+    eps_estimate_fy1:   mapped[F.eps_fy1],
+    revenue_estimate_fy1: mapped[F.rev_fy1],
+    dividend_yield:     mapped[F.div_yield],
+    dividends_per_share: mapped[F.div_per_share],
+  };
 
   return { success: true, symbol: sym, fundamentals };
 }
@@ -559,16 +661,8 @@ export async function getEconomicCalendar({ from, to, countries, impact } = {}) 
   const fromDate = from || new Date().toISOString().split('T')[0];
   const toDate = to || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var baseUrl = window.ECONOMIC_CALENDAR_URL || 'https://economic-calendar.tradingview.com/';
-      var url = baseUrl + 'events?from=' + encodeURIComponent(${safeString(fromDate + 'T00:00:00.000Z')}) +
-                '&to=' + encodeURIComponent(${safeString(toDate + 'T23:59:59.999Z')});
-      var resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const calUrl = `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(fromDate + 'T00:00:00.000Z')}&to=${encodeURIComponent(toDate + 'T23:59:59.999Z')}`;
+  const result = await serverFetch(calUrl);
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch economic calendar');
 
@@ -609,29 +703,17 @@ export async function getHoldings({ symbol } = {}) {
     return c.symbolExt().type || null;
   })()`);
 
-  // Use screener to get available ETF/security metadata
-  const result = await evaluateAsync(`
-    (async function() {
-      var sym = ${safeString(sym)};
-      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-      var market = /^PSX:/i.test(sym) ? 'global' : (/^(NASDAQ|NYSE|AMEX|CBOE|BATS):/i.test(sym) ? 'america' : 'global');
-      var url = host + '/' + market + '/scan';
-      var columns = [
-        'name','type','description','sector','industry','market_cap_calc',
-        'assets_under_management','number_of_employees','exchange',
-        'shares_outstanding','float_shares_outstanding',
-        'institutional_holding','insider_holding'
-      ];
-      var resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ symbols: { tickers: [sym] }, columns: columns })
-      });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const holdingsMarket = screenerMarket(sym);
+  const holdingsCols = [
+    F.name, F.type, F.description, F.sector, F.industry, F.market_cap,
+    F.aum, F.employees, F.exchange,
+    F.shares_out, F.float_shares,
+    F.inst_holding, F.ins_holding,
+  ];
+  const result = await serverFetch(`https://scanner.tradingview.com/${holdingsMarket}/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ symbols: { tickers: [sym] }, columns: holdingsCols }),
+  });
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch holdings data');
 
@@ -670,7 +752,7 @@ export async function screenStocks({ market = 'america', filters = [], sort_by =
     operation: opMap[f.op] || f.op,
     right: f.value,
   }));
-  const defaultFields = ['name', 'close', 'change|1D', 'market_cap_calc', 'P.EARNINGS', 'Revenue_YoY', 'EPS_Diluted_YoY', 'sector', 'industry'];
+  const defaultFields = [F.name, F.close, 'change|1D', F.market_cap, F.pe, F.revenue_yoy, F.eps_yoy, F.sector, F.industry];
   const columns = fields && fields.length > 0 ? fields : defaultFields;
   const rangeLimit = Math.min(limit || 50, 200);
 
@@ -683,20 +765,10 @@ export async function screenStocks({ market = 'america', filters = [], sort_by =
   };
   const bodyJson = JSON.stringify(body);
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-      var url = host + '/' + ${safeString(market)} + '/scan';
-      var resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: ${safeString(bodyJson)}
-      });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const result = await serverFetch(`https://scanner.tradingview.com/${market}/scan`, {
+    method: 'POST',
+    body: bodyJson,
+  });
 
   if (!result || result.error) throw new Error(result?.error || 'Screener request failed');
 
@@ -716,129 +788,105 @@ export async function screenStocks({ market = 'america', filters = [], sort_by =
 
 export async function getFinancials({ symbol, period = 'both' } = {}) {
   const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
-
-  const annualCols = [
-    'name', 'close', 'market_cap_calc',
-    'Revenue_Annual', 'Revenue_YoY', 'Gross_Profit_Annual', 'EBITDA_Annual',
-    'Net_Income_Annual', 'EPS_Diluted_FY', 'Operating_Expense_Annual',
-  ];
-  const quarterlyCols = [
-    'Revenue_FQ', 'Revenue_QoQ', 'Revenue_YoY',
-    'Gross_Profit_FQ', 'EBITDA_FQ', 'Net_Income_FQ', 'EPS_Diluted_FQ',
-  ];
-  const balanceCols = [
-    'Total_Assets_Annual', 'Total_Liabilities_Annual', 'Cash_F_Equiv_Annual',
-    'Long_LT_Debt_Annual', 'Total_Equity_Annual',
-  ];
-  const cashflowCols = [
-    'Free_Cash_Flow_TTM', 'Cash_From_Operations_Annual', 'CapEx_Annual',
-  ];
-  const ratioCols = [
-    'P.EARNINGS', 'P.SALES', 'Price_to_Book_ratio_FQ', 'EV_EBITDA',
-    'Return_on_Equity', 'Return_on_Assets', 'ROCE_TTM',
-    'Gross_Profit_Margin', 'Net_Income_Margin', 'Operating_Margin',
-    'Current_Ratio_Annual', 'Quick_Ratio_Annual', 'Debt_to_Equity', 'Debt_Ratio_Annual',
-  ];
-  const estimateCols = [
-    'EPS_Estimate_FY1', 'EPS_Estimate_FY2',
-    'Revenue_Estimate_FY1', 'Revenue_Estimate_FY2',
-    'earnings_release_date_fq',
-  ];
-
-  let columns;
-  if (period === 'annual') columns = [...annualCols, ...balanceCols, ...cashflowCols, ...ratioCols, ...estimateCols];
-  else if (period === 'quarterly') columns = ['name', 'close', 'market_cap_calc', ...quarterlyCols, ...ratioCols, ...estimateCols];
-  else columns = [...annualCols, ...quarterlyCols, ...balanceCols, ...cashflowCols, ...ratioCols, ...estimateCols];
-
-  const deduped = [...new Set(columns)];
-  const bodyJson = JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped });
   const market = screenerMarket(sym);
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-      var url = host + '/' + ${safeString(market)} + '/scan';
-      var resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: ${safeString(bodyJson)}
-      });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  // Screener returns one snapshot value per field (TTM / MRQ / most-recent).
+  // Historical quarterly series are NOT available here — use Pine Script
+  // request.financial() for multi-period history.
+  const columns = [
+    F.name, F.close, F.market_cap,
+    // Income — TTM
+    F.revenue, F.revenue_yoy, F.gross_profit, F.ebitda, F.net_income, F.eps_ttm,
+    // Income — MRQ
+    F.revenue_fq, F.revenue_qoq, F.gross_profit_fq, F.ebitda_fq, F.net_income_fq, F.eps_fq,
+    // Balance sheet
+    F.total_assets, F.total_liab, F.cash, F.total_debt, F.total_equity,
+    // Cash flow
+    F.fcf, F.operating_cf, F.capex,
+    // Valuation
+    F.pe, F.ps, F.pb, F.ev_ebitda,
+    // Margins & returns
+    F.gross_margin, F.net_margin, F.op_margin, F.roe, F.roa, F.roce,
+    // Liquidity
+    F.current_ratio, F.quick_ratio, F.de, F.debt_ratio,
+    // Estimates & dates
+    F.eps_fy1, F.eps_fy2, F.rev_fy1, F.rev_fy2, F.next_earnings,
+  ];
+  const deduped = [...new Set(columns)];
+
+  const result = await serverFetch(`https://scanner.tradingview.com/${market}/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped }),
+  });
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch financials');
   const row = result.data?.[0]?.d;
-  if (!row) return { success: true, symbol: sym, financials: null, message: 'No financial data available for this symbol' };
+  if (!row) return { success: true, symbol: sym, data: null, message: 'No financial data available for this symbol' };
 
-  const mapped = {};
-  deduped.forEach((col, i) => { mapped[col] = row[i] ?? null; });
+  const m = {};
+  deduped.forEach((col, i) => { m[col] = row[i] ?? null; });
 
-  const out = { success: true, symbol: sym, period };
-
-  if (period !== 'quarterly') {
-    out.income_annual = {
-      revenue: mapped['Revenue_Annual'],
-      revenue_yoy_pct: mapped['Revenue_YoY'],
-      gross_profit: mapped['Gross_Profit_Annual'],
-      ebitda: mapped['EBITDA_Annual'],
-      net_income: mapped['Net_Income_Annual'],
-      eps_diluted: mapped['EPS_Diluted_FY'],
-    };
-    out.balance_sheet = {
-      total_assets: mapped['Total_Assets_Annual'],
-      total_liabilities: mapped['Total_Liabilities_Annual'],
-      cash_equivalents: mapped['Cash_F_Equiv_Annual'],
-      long_term_debt: mapped['Long_LT_Debt_Annual'],
-      total_equity: mapped['Total_Equity_Annual'],
-    };
-    out.cash_flow = {
-      free_cash_flow_ttm: mapped['Free_Cash_Flow_TTM'],
-      operating_cash_flow: mapped['Cash_From_Operations_Annual'],
-      capex: mapped['CapEx_Annual'],
-    };
-  }
-
-  if (period !== 'annual') {
-    out.income_quarterly = {
-      revenue: mapped['Revenue_FQ'],
-      revenue_qoq_pct: mapped['Revenue_QoQ'],
-      revenue_yoy_pct: mapped['Revenue_YoY'],
-      gross_profit: mapped['Gross_Profit_FQ'],
-      ebitda: mapped['EBITDA_FQ'],
-      net_income: mapped['Net_Income_FQ'],
-      eps_diluted: mapped['EPS_Diluted_FQ'],
-    };
-  }
-
-  out.ratios = {
-    pe: mapped['P.EARNINGS'],
-    ps: mapped['P.SALES'],
-    pb: mapped['Price_to_Book_ratio_FQ'],
-    ev_ebitda: mapped['EV_EBITDA'],
-    roe: mapped['Return_on_Equity'],
-    roa: mapped['Return_on_Assets'],
-    roce: mapped['ROCE_TTM'],
-    gross_margin: mapped['Gross_Profit_Margin'],
-    net_margin: mapped['Net_Income_Margin'],
-    operating_margin: mapped['Operating_Margin'],
-    current_ratio: mapped['Current_Ratio_Annual'],
-    quick_ratio: mapped['Quick_Ratio_Annual'],
-    debt_to_equity: mapped['Debt_to_Equity'],
-    debt_ratio: mapped['Debt_Ratio_Annual'],
+  return {
+    success: true,
+    symbol: sym,
+    note: 'Snapshot values from screener (TTM/MRQ — not historical series). For quarterly history use Pine Script request.financial().',
+    valuation: {
+      market_cap: m[F.market_cap],
+      pe:         m[F.pe],
+      ps:         m[F.ps],
+      pb:         m[F.pb],
+      ev_ebitda:  m[F.ev_ebitda],
+    },
+    income: {
+      revenue_ttm:      m[F.revenue],
+      revenue_yoy_pct:  m[F.revenue_yoy],
+      gross_profit_ttm: m[F.gross_profit],
+      ebitda_ttm:       m[F.ebitda],
+      net_income_ttm:   m[F.net_income],
+      eps_ttm:          m[F.eps_ttm],
+      revenue_mrq:      m[F.revenue_fq],
+      revenue_qoq_pct:  m[F.revenue_qoq],
+      gross_profit_mrq: m[F.gross_profit_fq],
+      ebitda_mrq:       m[F.ebitda_fq],
+      net_income_mrq:   m[F.net_income_fq],
+      eps_mrq:          m[F.eps_fq],
+    },
+    balance: {
+      total_assets:     m[F.total_assets],
+      total_liab:       m[F.total_liab],
+      cash:             m[F.cash],
+      total_debt:       m[F.total_debt],
+      total_equity:     m[F.total_equity],
+    },
+    cash_flow: {
+      fcf_ttm:          m[F.fcf],
+      operating_cf:     m[F.operating_cf],
+      capex:            m[F.capex],
+    },
+    margins: {
+      gross_margin:     m[F.gross_margin],
+      net_margin:       m[F.net_margin],
+      op_margin:        m[F.op_margin],
+    },
+    returns: {
+      roe:              m[F.roe],
+      roa:              m[F.roa],
+      roce:             m[F.roce],
+    },
+    liquidity: {
+      current_ratio:    m[F.current_ratio],
+      quick_ratio:      m[F.quick_ratio],
+      debt_to_equity:   m[F.de],
+      debt_ratio:       m[F.debt_ratio],
+    },
+    estimates: {
+      eps_fy1:          m[F.eps_fy1],
+      eps_fy2:          m[F.eps_fy2],
+      revenue_fy1:      m[F.rev_fy1],
+      revenue_fy2:      m[F.rev_fy2],
+    },
+    next_earnings_date: m[F.next_earnings],
   };
-
-  out.estimates = {
-    eps_fy1: mapped['EPS_Estimate_FY1'],
-    eps_fy2: mapped['EPS_Estimate_FY2'],
-    revenue_fy1: mapped['Revenue_Estimate_FY1'],
-    revenue_fy2: mapped['Revenue_Estimate_FY2'],
-    next_earnings_date: mapped['earnings_release_date_fq'],
-  };
-
-  return out;
 }
 
 export async function getEarningsCalendar({ from, to, market = 'america', limit = 100 } = {}) {
@@ -847,42 +895,31 @@ export async function getEarningsCalendar({ from, to, market = 'america', limit 
   const rangeLimit = Math.min(limit || 100, 200);
 
   const columns = [
-    'name', 'close', 'market_cap_calc', 'earnings_release_date_fq',
-    'EPS_Estimate_FY1', 'Revenue_Estimate_FY1', 'EPS_Diluted_TTM',
-    'Revenue_Annual', 'sector', 'type',
+    F.name, F.close, F.market_cap, F.next_earnings,
+    F.eps_fy1, F.rev_fy1, F.eps_ttm,
+    F.revenue, F.sector, F.type,
   ];
   const body = {
     filter: [
-      { left: 'earnings_release_date_fq', operation: 'in_range', right: [fromDate, toDate] },
-      { left: 'type', operation: 'equal', right: 'stock' },
+      { left: F.next_earnings, operation: 'in_range', right: [fromDate, toDate] },
+      { left: F.type, operation: 'equal', right: 'stock' },
     ],
-    sort: { sortBy: 'market_cap_calc', sortOrder: 'desc' },
+    sort: { sortBy: F.market_cap, sortOrder: 'desc' },
     range: [0, rangeLimit],
     columns,
     options: { lang: 'en' },
   };
-  const bodyJson = JSON.stringify(body);
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-      var url = host + '/' + ${safeString(market)} + '/scan';
-      var resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: ${safeString(bodyJson)}
-      });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const result = await serverFetch(`https://scanner.tradingview.com/${market}/scan`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch earnings calendar');
 
   const rows = result.data || [];
   const reporters = rows.map(row => {
-    const [name, price, market_cap, earnings_date, eps_estimate, rev_estimate, eps_ttm, revenue_annual, sector] = row.d || [];
+    const [name, price, market_cap, earnings_date, eps_estimate, rev_estimate, eps_ttm, revenue_ttm, sector] = row.d || [];
     return {
       symbol: row.s,
       name,
@@ -892,7 +929,7 @@ export async function getEarningsCalendar({ from, to, market = 'america', limit 
       eps_estimate_fy1: eps_estimate,
       revenue_estimate_fy1: rev_estimate,
       eps_ttm,
-      revenue_annual,
+      revenue_ttm,
       sector,
     };
   });
@@ -905,31 +942,18 @@ export async function getBulk({ symbols, fields } = {}) {
   const tickers = symbols.slice(0, 50);
 
   const defaultFields = [
-    'name', 'close', 'market_cap_calc', 'P.EARNINGS', 'EPS_Diluted_TTM',
-    'Revenue_Annual', 'Revenue_YoY', 'Net_Income_Margin', 'Return_on_Equity',
-    'earnings_release_date_fq', 'sector', 'industry', 'exchange',
+    F.name, F.close, F.market_cap, F.pe, F.eps_ttm,
+    F.revenue, F.revenue_yoy, F.net_margin, F.roe,
+    F.next_earnings, F.sector, F.industry, F.exchange,
   ];
   const columns = fields && fields.length > 0 ? fields : defaultFields;
 
   const markets = [...new Set(tickers.map(s => screenerMarket(s)))];
 
-  const fetchForMarket = async (market, mTickers) => {
-    const bodyJson = JSON.stringify({ symbols: { tickers: mTickers }, columns });
-    return evaluateAsync(`
-      (async function() {
-        var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
-        var url = host + '/' + ${safeString(market)} + '/scan';
-        var resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: ${safeString(bodyJson)}
-        });
-        if (!resp.ok) return { error: 'HTTP ' + resp.status };
-        return await resp.json();
-      })()
-    `);
-  };
+  const fetchForMarket = (mkt, mTickers) => serverFetch(`https://scanner.tradingview.com/${mkt}/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ symbols: { tickers: mTickers }, columns }),
+  });
 
   function toKey(col) {
     return col.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '').toLowerCase();
@@ -955,17 +979,8 @@ export async function getNews({ symbol, count = 20 } = {}) {
   const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
   const limit = Math.min(parseInt(count, 10) || 20, 100);
 
-  const result = await evaluateAsync(`
-    (async function() {
-      var sym = ${safeString(sym)};
-      var base = window.NEWS_SERVICE_URL || 'https://news-headlines.tradingview.com';
-      var url = base + '/v2/view/asset/news?symbol=' + encodeURIComponent(sym) +
-                '&client=web&lang=en&section=symbol&limit=' + ${limit};
-      var resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) return { error: 'HTTP ' + resp.status };
-      return await resp.json();
-    })()
-  `);
+  const newsUrl = `https://news-headlines.tradingview.com/v2/view/asset/news?symbol=${encodeURIComponent(sym)}&client=web&lang=en&section=symbol&limit=${limit}`;
+  const result = await serverFetch(newsUrl);
 
   if (!result || result.error) throw new Error(result?.error || 'Failed to fetch news');
 

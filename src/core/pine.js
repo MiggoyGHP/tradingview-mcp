@@ -497,7 +497,78 @@ export async function smartCompile() {
     })()
   `);
 
-  const studyAdded = (studiesBefore !== null && studiesAfter !== null) ? studiesAfter > studiesBefore : null;
+  let studyAdded = (studiesBefore !== null && studiesAfter !== null) ? studiesAfter > studiesBefore : null;
+
+  // Self-healing: if "Pine Save" was clicked but the indicator was already on
+  // the chart, the save didn't push the new source to the running study.
+  // Find and remove the matching indicator, then recompile so "Add to chart"
+  // becomes available and the updated source lands on the chart.
+  if (buttonClicked === 'Pine Save' && studyAdded === false) {
+    const scriptTitle = await evaluate(`
+      (function() {
+        var el = document.querySelector('[data-name="legend-source-title"]') ||
+                 document.querySelector('.pane-legend-title__description') ||
+                 document.querySelector('[class*="legendSourceTitle"]');
+        return el ? el.textContent.trim() : null;
+      })()`);
+
+    if (scriptTitle) {
+      const matchId = await evaluate(`
+        (function() {
+          try {
+            var chart = window.TradingViewApi._activeChartWidgetWV.value();
+            var studies = chart ? chart.getAllStudies() : [];
+            var needle = ${JSON.stringify(scriptTitle.toLowerCase())};
+            for (var i = 0; i < studies.length; i++) {
+              if ((studies[i].name || '').toLowerCase().indexOf(needle) !== -1) {
+                return studies[i].id;
+              }
+            }
+          } catch(e) {}
+          return null;
+        })()`);
+
+      if (matchId) {
+        await evaluate(`
+          (function() {
+            try {
+              var chart = window.TradingViewApi._activeChartWidgetWV.value();
+              chart.removeEntity(${JSON.stringify(matchId)});
+            } catch(e) {}
+          })()`);
+        await new Promise(r => setTimeout(r, 1000));
+
+        const secondClick = await evaluate(`
+          (function() {
+            var btns = document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+              var text = btns[i].textContent.trim();
+              if (/save and add to chart/i.test(text)) { btns[i].click(); return 'Save and add to chart'; }
+              if (/^add to chart$/i.test(text)) { btns[i].click(); return 'Add to chart'; }
+            }
+            return null;
+          })()`);
+
+        if (secondClick) {
+          await new Promise(r => setTimeout(r, 2500));
+          const studiesFinal = await evaluate(`
+            (function() {
+              try { return window.TradingViewApi._activeChartWidgetWV.value().getAllStudies().length; }
+              catch(e) { return null; }
+            })()`);
+          studyAdded = studiesFinal !== null ? studiesFinal > studiesBefore : null;
+          return {
+            success: true,
+            button_clicked: secondClick,
+            has_errors: errors?.length > 0,
+            errors: errors || [],
+            study_added: studyAdded,
+            auto_refreshed: true,
+          };
+        }
+      }
+    }
+  }
 
   return {
     success: true,

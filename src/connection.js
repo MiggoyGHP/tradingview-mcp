@@ -164,6 +164,26 @@ export async function evaluateAsync(expression) {
   return evaluate(expression, { awaitPromise: true });
 }
 
+/**
+ * Make an HTTP request from Node.js using session cookies from the TradingView browser.
+ * Bypasses browser CORS restrictions — use for cross-origin API calls (scanner, news, etc.)
+ */
+export async function serverFetch(url, options = {}) {
+  const c = await getClient();
+  try { await c.Network.enable(); } catch {}
+  const { cookies } = await c.Network.getCookies({ urls: [url] });
+  const cookieStr = (cookies || []).map(ck => `${ck.name}=${ck.value}`).join('; ');
+  const headers = { ...options.headers };
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  if (cookieStr) headers['Cookie'] = cookieStr;
+  const resp = await fetch(url, { ...options, headers });
+  if (!resp.ok) {
+    let body; try { body = await resp.text(); } catch {}
+    return { error: `HTTP ${resp.status}`, body };
+  }
+  return resp.json();
+}
+
 export async function disconnect() {
   if (client) {
     try { await client.close(); } catch {}

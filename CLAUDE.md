@@ -12,9 +12,9 @@
 - `data_get_bulk` → get fundamentals for a known list of symbols at once (max 50). No chart required.
 
 ### "Get full financial statements"
-- `data_get_financials` → income statement + balance sheet + cash flow + ratios + forward estimates. Annual and/or quarterly. FactSet data. No chart required when `symbol` is provided.
-  - Returns: `income_annual`, `income_quarterly`, `balance_sheet`, `cash_flow`, `ratios`, `estimates`
-  - Use `period: "annual"` or `"quarterly"` to limit output size
+- `data_get_financials` → current-period snapshot: income (TTM + MRQ), balance sheet, cash flow, valuation ratios, margins, returns, liquidity, and forward estimates. No chart required when `symbol` is provided.
+  - Returns: `valuation`, `income` (TTM + MRQ keys), `balance`, `cash_flow`, `margins`, `returns`, `liquidity`, `estimates`, `next_earnings_date`
+  - **Snapshot only** — screener API is one-value-per-metric. For multi-quarter history use Pine Script `request.financial()`.
 
 ### "Find upcoming earnings"
 - `data_get_earnings_calendar` → who's reporting and when, sorted by market cap, with consensus EPS/revenue estimates. No chart required.
