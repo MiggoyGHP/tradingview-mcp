@@ -136,11 +136,11 @@ Operators: gt (>), lt (<), eq (=), neq (≠), between ([min,max]), not_between.`
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_financials', 'Get full financial statements for a symbol: income statement (annual + quarterly), balance sheet, cash flow, key ratios, and forward estimates. FactSet data via TradingView screener. No chart required when symbol is provided.', {
+  server.tool('data_get_financials',
+    'Get a CURRENT-PERIOD financial snapshot for a symbol: TTM income statement, MRQ (most-recent quarter) income metrics, balance sheet, cash flow, valuation ratios, margins, returns, liquidity, and forward estimates. Data via TradingView screener. No chart required when symbol is provided.\n\nIMPORTANT LIMITATION: This returns ONE snapshot value per metric (TTM = trailing 12 months, MRQ = most-recent quarter). It is NOT a time-series and CANNOT return multiple historical quarters. Requesting "6 quarters of revenue" or any multi-period history will FAIL with HTTP 400 because those field names do not exist in the screener API. For historical quarterly series (e.g. past 6 quarters of revenue/net income/FCF), you MUST use Pine Script request.financial() instead.', {
     symbol: z.string().optional().describe('Symbol (e.g. NASDAQ:AAPL). Defaults to current chart symbol.'),
-    period: z.enum(['annual', 'quarterly', 'both']).optional().describe('Which periods to return: annual only, quarterly only, or both (default: both)'),
-  }, async ({ symbol, period }) => {
-    try { return jsonResult(await core.getFinancials({ symbol, period })); }
+  }, async ({ symbol }) => {
+    try { return jsonResult(await core.getFinancials({ symbol })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
@@ -154,9 +154,10 @@ Operators: gt (>), lt (<), eq (=), neq (≠), between ([min,max]), not_between.`
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_bulk', 'Get fundamentals for 1–50 symbols at once without switching charts. Returns key financial metrics for each symbol. Useful for comparing a watchlist or index members.', {
+  server.tool('data_get_bulk',
+    'Get current fundamental snapshot for 1–50 symbols at once without switching charts. Returns ONE value per metric per symbol — NOT a historical series. Cannot return multiple quarters of data; for quarterly history use Pine Script request.financial().\n\nValid screener field names (use these exactly): name, close, market_cap_calc, price_earnings_ttm, earnings_per_share_diluted_ttm, total_revenue, revenue_change_ttm, revenue_change, net_margin, return_on_equity, return_on_assets, debt_to_equity, current_ratio, free_cash_flow_ttm, net_income, net_income_fq, revenue_fq, gross_margin, earnings_release_next_date, sector, industry, exchange.', {
     symbols: z.array(z.string()).describe('Array of symbols (e.g. ["NASDAQ:AAPL","NASDAQ:MSFT","NYSE:JPM"]). Max 50.'),
-    fields: z.array(z.string()).optional().describe('Columns to return. Default: name, close, market_cap_calc, P.EARNINGS, EPS_Diluted_TTM, Revenue_Annual, Revenue_YoY, Net_Income_Margin, Return_on_Equity, earnings_release_date_fq, sector, industry, exchange'),
+    fields: z.array(z.string()).optional().describe('Screener column names to return (see tool description for valid names). Invalid field names cause HTTP 400. Default fields: name, close, market_cap_calc, price_earnings_ttm, earnings_per_share_diluted_ttm, total_revenue, revenue_change_ttm, net_margin, return_on_equity, earnings_release_next_date, sector, industry, exchange'),
   }, async ({ symbols, fields }) => {
     try { return jsonResult(await core.getBulk({ symbols, fields })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }

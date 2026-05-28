@@ -611,7 +611,10 @@ export async function getFundamentals({ symbol } = {}) {
     body: JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped }),
   });
 
-  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch fundamentals');
+  if (!result || result.error) {
+    const detail = result?.body ? ` — screener said: ${result.body}` : '';
+    throw new Error(`${result?.error || 'Failed to fetch fundamentals'}${detail}`);
+  };
 
   const row = result.data?.[0]?.d;
   if (!row) return { success: true, symbol: sym, fundamentals: null, message: 'No fundamental data available for this symbol' };
@@ -715,7 +718,10 @@ export async function getHoldings({ symbol } = {}) {
     body: JSON.stringify({ symbols: { tickers: [sym] }, columns: holdingsCols }),
   });
 
-  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch holdings data');
+  if (!result || result.error) {
+    const detail = result?.body ? ` — screener said: ${result.body}` : '';
+    throw new Error(`${result?.error || 'Failed to fetch holdings data'}${detail}`);
+  };
 
   const row = result.data?.[0]?.d;
   if (!row) return { success: true, symbol: sym, holdings: null, message: 'No holdings data available' };
@@ -770,7 +776,10 @@ export async function screenStocks({ market = 'america', filters = [], sort_by =
     body: bodyJson,
   });
 
-  if (!result || result.error) throw new Error(result?.error || 'Screener request failed');
+  if (!result || result.error) {
+    const detail = result?.body ? ` — screener said: ${result.body}` : '';
+    throw new Error(`${result?.error || 'Screener request failed'}${detail}. Check that all field names in filters/columns are valid screener API names (e.g. market_cap_calc, price_earnings_ttm, total_revenue — not Revenue_Annual or P.EARNINGS).`);
+  };
 
   function toKey(col) {
     return col.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '').toLowerCase();
@@ -786,7 +795,7 @@ export async function screenStocks({ market = 'america', filters = [], sort_by =
   return { success: true, market, count: stocks.length, stocks };
 }
 
-export async function getFinancials({ symbol, period = 'both' } = {}) {
+export async function getFinancials({ symbol } = {}) {
   const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
   const market = screenerMarket(sym);
 
@@ -819,7 +828,10 @@ export async function getFinancials({ symbol, period = 'both' } = {}) {
     body: JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped }),
   });
 
-  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch financials');
+  if (!result || result.error) {
+    const detail = result?.body ? ` — screener said: ${result.body}` : '';
+    throw new Error(`${result?.error || 'Failed to fetch financials'}${detail}. NOTE: The screener API is snapshot-only (TTM/MRQ). Multi-quarter history is not available via this API; use Pine Script request.financial() for time-series data.`);
+  }
   const row = result.data?.[0]?.d;
   if (!row) return { success: true, symbol: sym, data: null, message: 'No financial data available for this symbol' };
 
@@ -915,7 +927,10 @@ export async function getEarningsCalendar({ from, to, market = 'america', limit 
     body: JSON.stringify(body),
   });
 
-  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch earnings calendar');
+  if (!result || result.error) {
+    const detail = result?.body ? ` — screener said: ${result.body}` : '';
+    throw new Error(`${result?.error || 'Failed to fetch earnings calendar'}${detail}`);
+  };
 
   const rows = result.data || [];
   const reporters = rows.map(row => {
@@ -963,7 +978,11 @@ export async function getBulk({ symbols, fields } = {}) {
   for (const market of markets) {
     const mTickers = tickers.filter(s => screenerMarket(s) === market);
     const result = await fetchForMarket(market, mTickers);
-    if (result && !result.error && result.data) {
+    if (result?.error) {
+      const detail = result.body ? ` — screener said: ${result.body}` : '';
+      throw new Error(`${result.error}${detail}. Ensure all field names in the fields array are valid screener API names (e.g. total_revenue, revenue_change_ttm, price_earnings_ttm). Invalid field names cause HTTP 400.`);
+    }
+    if (result?.data) {
       for (const row of result.data) {
         const obj = { symbol: row.s };
         columns.forEach((col, i) => { obj[toKey(col)] = row.d?.[i] ?? null; });

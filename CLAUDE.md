@@ -6,15 +6,30 @@
 
 ### "Screen / filter stocks"
 - `data_screen` → filter the entire US or global stock universe by financial/technical criteria. No chart required.
-  - Example: `{filters: [{field:"P.EARNINGS", op:"lt", value:20}, {field:"Revenue_YoY", op:"gt", value:15}], sort_by:"market_cap_calc"}`
-  - Common fields: `market_cap_calc`, `P.EARNINGS`, `P.SALES`, `EV_EBITDA`, `Revenue_YoY`, `Revenue_QoQ`, `EPS_Diluted_YoY`, `Return_on_Equity`, `Gross_Profit_Margin`, `Net_Income_Margin`, `Debt_to_Equity`, `sector`, `industry`, `exchange`, `close`
+  - Example: `{filters: [{field:"price_earnings_ttm", op:"lt", value:20}, {field:"revenue_change_ttm", op:"gt", value:15}], sort_by:"market_cap_calc"}`
+  - **Valid field names** (use these exactly — wrong names cause HTTP 400): `market_cap_calc`, `price_earnings_ttm`, `price_sales`, `enterprise_value_ebitda_ttm`, `revenue_change_ttm` (YoY%), `revenue_change` (QoQ%), `eps_change_ttm`, `return_on_equity`, `gross_margin`, `net_margin`, `debt_to_equity`, `sector`, `industry`, `exchange`, `close`, `total_revenue`, `net_income`, `free_cash_flow_ttm`, `earnings_release_next_date`
   - Operators: `gt` (>), `lt` (<), `eq` (=), `neq` (≠), `between` ([min,max]), `not_between`
-- `data_get_bulk` → get fundamentals for a known list of symbols at once (max 50). No chart required.
+- `data_get_bulk` → get current-snapshot fundamentals for a known list of symbols at once (max 50). No chart required. Same field name rules as `data_screen` — invalid names cause HTTP 400.
+
+### "Get historical quarterly series (e.g. past N quarters of revenue / net income / FCF)"
+**STOP — the screener API CANNOT do this.** `data_get_financials`, `data_get_bulk`, and `data_screen` all hit `scanner.tradingview.com/scan`, which returns **one snapshot value per metric** (TTM or MRQ). There are no fields for `_fq_2`, `_fq_3`, `revenue_q1_2024`, etc. Inventing such field names → HTTP 400.
+
+**The only way to get multi-quarter historical financial data is Pine Script:**
+```pine
+//@version=5
+indicator("Quarterly Revenue", overlay=false)
+rev = request.financial("NASDAQ:NOW", "TOTAL_REVENUE", "FQ")
+plot(rev, "Revenue")
+```
+- Use `request.financial(symbol, "TOTAL_REVENUE", "FQ")` for quarterly revenue
+- Use `request.financial(symbol, "NET_INCOME", "FQ")` for quarterly net income
+- Use `request.financial(symbol, "FREE_CASH_FLOW", "FQ")` for quarterly FCF
+- Pine Script gives access to the full history — run via `pine_set_source` + `pine_smart_compile`
 
 ### "Get full financial statements"
-- `data_get_financials` → current-period snapshot: income (TTM + MRQ), balance sheet, cash flow, valuation ratios, margins, returns, liquidity, and forward estimates. No chart required when `symbol` is provided.
+- `data_get_financials` → **CURRENT-PERIOD SNAPSHOT ONLY**: TTM income statement + MRQ metrics, balance sheet, cash flow, valuation ratios, margins, returns, liquidity, and forward estimates. No chart required when `symbol` is provided.
   - Returns: `valuation`, `income` (TTM + MRQ keys), `balance`, `cash_flow`, `margins`, `returns`, `liquidity`, `estimates`, `next_earnings_date`
-  - **Snapshot only** — screener API is one-value-per-metric. For multi-quarter history use Pine Script `request.financial()`.
+  - **One value per metric, not a time-series.** Cannot return "6 quarters" of anything.
 
 ### "Find upcoming earnings"
 - `data_get_earnings_calendar` → who's reporting and when, sorted by market cap, with consensus EPS/revenue estimates. No chart required.

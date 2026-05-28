@@ -176,6 +176,9 @@ export async function serverFetch(url, options = {}) {
   const headers = { ...options.headers };
   if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   if (cookieStr) headers['Cookie'] = cookieStr;
+  if (!headers['Origin']) headers['Origin'] = 'https://www.tradingview.com';
+  if (!headers['Referer']) headers['Referer'] = 'https://www.tradingview.com/';
+  if (!headers['User-Agent']) headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
   const resp = await fetch(url, { ...options, headers });
   if (!resp.ok) {
     let body; try { body = await resp.text(); } catch {}
