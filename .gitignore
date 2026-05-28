@@ -6,3 +6,8 @@ temp_*
 discovery-log.json
 .firecrawl/
 .claude/
+!.claude/skills/
+!.claude/skills/**/
+!.claude/skills/**/*.md
+!.claude/agents/
+!.claude/agents/*.md
