@@ -1,8 +1,27 @@
 # TradingView MCP — Claude Instructions
 
-79 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+83 tools. Primary use: **market data**. Secondary: chart control via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
+
+### "Screen / filter stocks"
+- `data_screen` → filter the entire US or global stock universe by financial/technical criteria. No chart required.
+  - Example: `{filters: [{field:"P.EARNINGS", op:"lt", value:20}, {field:"Revenue_YoY", op:"gt", value:15}], sort_by:"market_cap_calc"}`
+  - Common fields: `market_cap_calc`, `P.EARNINGS`, `P.SALES`, `EV_EBITDA`, `Revenue_YoY`, `Revenue_QoQ`, `EPS_Diluted_YoY`, `Return_on_Equity`, `Gross_Profit_Margin`, `Net_Income_Margin`, `Debt_to_Equity`, `sector`, `industry`, `exchange`, `close`
+  - Operators: `gt` (>), `lt` (<), `eq` (=), `neq` (≠), `between` ([min,max]), `not_between`
+- `data_get_bulk` → get fundamentals for a known list of symbols at once (max 50). No chart required.
+
+### "Get full financial statements"
+- `data_get_financials` → income statement + balance sheet + cash flow + ratios + forward estimates. Annual and/or quarterly. FactSet data. No chart required when `symbol` is provided.
+  - Returns: `income_annual`, `income_quarterly`, `balance_sheet`, `cash_flow`, `ratios`, `estimates`
+  - Use `period: "annual"` or `"quarterly"` to limit output size
+
+### "Find upcoming earnings"
+- `data_get_earnings_calendar` → who's reporting and when, sorted by market cap, with consensus EPS/revenue estimates. No chart required.
+  - Different from `data_get_economic_calendar` (which is macro events: CPI, NFP, FOMC, GDP)
+
+### "Get fundamental data for one symbol"
+- `data_get_fundamentals` → single-symbol FactSet snapshot: P/E, P/B, EPS, revenue, margins, debt, ROE, ROA, ROCE, quick ratio, D/E, growth rates (YoY/QoQ), forward estimates, dividend yield, earnings date, sector/industry.
 
 ### "What's on my chart right now?"
 1. `chart_get_state` → symbol, timeframe, chart type, list of all indicators with entity IDs
@@ -21,8 +40,9 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 
 ### "Give me price data"
 - `data_get_ohlcv` with `summary: true` → compact stats (high, low, range, change%, avg volume, last 5 bars)
-- `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100)
-- `quote_get` → single latest price snapshot
+- `data_get_ohlcv` with `symbol: "NASDAQ:AAPL"` → fetch bars for any ticker (temporarily switches chart then restores)
+- `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100, max 500)
+- `quote_get` → single latest price snapshot for current chart symbol
 
 ### "Analyze my chart" (full report workflow)
 1. `quote_get` → current price

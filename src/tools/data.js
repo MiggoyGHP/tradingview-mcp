@@ -3,11 +3,12 @@ import { jsonResult } from './_format.js';
 import * as core from '../core/data.js';
 
 export function registerDataTools(server) {
-  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context).', {
+  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats. Pass symbol to fetch bars for any ticker (temporarily switches chart then restores).', {
     count: z.coerce.number().optional().describe('Number of bars to retrieve (max 500, default 100)'),
     summary: z.coerce.boolean().optional().describe('Return summary stats (high, low, open, close, avg volume, range) instead of all bars — much smaller output'),
-  }, async ({ count, summary }) => {
-    try { return jsonResult(await core.getOhlcv({ count, summary })); }
+    symbol: z.string().optional().describe('Symbol to fetch bars for (e.g. NASDAQ:AAPL). Defaults to current chart symbol. Temporarily switches chart if provided.'),
+  }, async ({ count, summary, symbol }) => {
+    try { return jsonResult(await core.getOhlcv({ count, summary, symbol })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
@@ -84,7 +85,7 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_fundamentals', 'Get fundamental / Factset data for a symbol via TradingView screener API (P/E, EPS, revenue, margins, debt, earnings date, sector). Works for US stocks and Philippine stocks (PSX: prefix).', {
+  server.tool('data_get_fundamentals', 'Get fundamental / FactSet snapshot for a symbol: P/E, EPS, revenue, margins, debt, growth rates (YoY/QoQ), ROA, ROCE, quick ratio, D/E, forward EPS/revenue estimates, dividend yield, earnings date. US + global stocks.', {
     symbol: z.string().optional().describe('Symbol to look up (e.g. NASDAQ:AAPL, PSX:SM). Defaults to current chart symbol.'),
   }, async ({ symbol }) => {
     try { return jsonResult(await core.getFundamentals({ symbol })); }
@@ -113,6 +114,51 @@ export function registerDataTools(server) {
     count: z.coerce.number().optional().describe('Number of articles to return (default 20, max 100).'),
   }, async ({ symbol, count }) => {
     try { return jsonResult(await core.getNews({ symbol, count })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_screen', `Screen the stock universe by financial or technical criteria using TradingView's screener API. Returns a ranked list of stocks matching your filters. No chart required.
+
+Common fields: market_cap_calc, P.EARNINGS (P/E), P.SALES (P/S), Price_to_Book_ratio_FQ, EV_EBITDA, Revenue_YoY, Revenue_QoQ, EPS_Diluted_YoY, EPS_Diluted_TTM, Gross_Profit_Margin, Net_Income_Margin, Return_on_Equity, Return_on_Assets, Debt_to_Equity, Current_Ratio_Annual, close, sector, industry, exchange, earnings_release_date_fq.
+Operators: gt (>), lt (<), eq (=), neq (≠), between ([min,max]), not_between.`, {
+    market: z.enum(['america', 'global', 'crypto', 'forex']).optional().describe('Market universe to screen (default: america)'),
+    filters: z.array(z.object({
+      field: z.string().describe('Screener column name (e.g. market_cap_calc, P.EARNINGS, Revenue_YoY)'),
+      op: z.enum(['gt', 'lt', 'eq', 'neq', 'between', 'not_between']).describe('Comparison operator'),
+      value: z.union([z.number(), z.string(), z.array(z.number())]).describe('Value to compare against (use array [min,max] for between/not_between)'),
+    })).optional().describe('Filter conditions. Omit for unfiltered list sorted by sort_by.'),
+    sort_by: z.string().optional().describe('Column to sort by (default: market_cap_calc)'),
+    sort_order: z.enum(['asc', 'desc']).optional().describe('Sort direction (default: desc)'),
+    limit: z.coerce.number().optional().describe('Max results to return (default 50, max 200)'),
+    fields: z.array(z.string()).optional().describe('Columns to return. Default: name, close, change_1d, market_cap_calc, P.EARNINGS, Revenue_YoY, EPS_Diluted_YoY, sector, industry'),
+  }, async ({ market, filters, sort_by, sort_order, limit, fields }) => {
+    try { return jsonResult(await core.screenStocks({ market, filters, sort_by, sort_order, limit, fields })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_financials', 'Get full financial statements for a symbol: income statement (annual + quarterly), balance sheet, cash flow, key ratios, and forward estimates. FactSet data via TradingView screener. No chart required when symbol is provided.', {
+    symbol: z.string().optional().describe('Symbol (e.g. NASDAQ:AAPL). Defaults to current chart symbol.'),
+    period: z.enum(['annual', 'quarterly', 'both']).optional().describe('Which periods to return: annual only, quarterly only, or both (default: both)'),
+  }, async ({ symbol, period }) => {
+    try { return jsonResult(await core.getFinancials({ symbol, period })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_earnings_calendar', 'Get upcoming earnings reporters for a date range, sorted by market cap. Returns consensus EPS and revenue estimates. No chart required.', {
+    from: z.string().optional().describe('Start date ISO format (e.g. "2026-05-28"). Defaults to today.'),
+    to: z.string().optional().describe('End date ISO format (e.g. "2026-06-04"). Defaults to 7 days from now.'),
+    market: z.enum(['america', 'global']).optional().describe('Market to scan (default: america)'),
+    limit: z.coerce.number().optional().describe('Max reporters to return (default 100, max 200)'),
+  }, async ({ from, to, market, limit }) => {
+    try { return jsonResult(await core.getEarningsCalendar({ from, to, market, limit })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_bulk', 'Get fundamentals for 1–50 symbols at once without switching charts. Returns key financial metrics for each symbol. Useful for comparing a watchlist or index members.', {
+    symbols: z.array(z.string()).describe('Array of symbols (e.g. ["NASDAQ:AAPL","NASDAQ:MSFT","NYSE:JPM"]). Max 50.'),
+    fields: z.array(z.string()).optional().describe('Columns to return. Default: name, close, market_cap_calc, P.EARNINGS, EPS_Diluted_TTM, Revenue_Annual, Revenue_YoY, Net_Income_Margin, Return_on_Equity, earnings_release_date_fq, sector, industry, exchange'),
+  }, async ({ symbols, fields }) => {
+    try { return jsonResult(await core.getBulk({ symbols, fields })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 }

@@ -1,7 +1,8 @@
 /**
  * Core data access logic.
  */
-import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
+import { evaluate, evaluateAsync, KNOWN_PATHS, safeString, getChartApi, getChartCollection } from '../connection.js';
+import { waitForChartReady } from '../wait.js';
 
 const MAX_OHLCV_BARS = 500;
 const MAX_TRADES = 20;
@@ -59,8 +60,29 @@ function buildGraphicsJS(collectionName, mapKey, filter) {
   `;
 }
 
-export async function getOhlcv({ count, summary } = {}) {
+export async function getOhlcv({ count, summary, symbol } = {}) {
   const limit = Math.min(count || 100, MAX_OHLCV_BARS);
+
+  let originalSymbol = null;
+  let switched = false;
+  if (symbol) {
+    try {
+      originalSymbol = await evaluateAsync(`(function() {
+        var c = window.TradingViewApi._activeChartWidgetWV.value();
+        return c.symbolExt().exchange + ':' + c.symbol();
+      })()`);
+    } catch {}
+    let colPath, apiPath;
+    try { colPath = await getChartCollection(); } catch {}
+    try { if (!colPath) apiPath = await getChartApi(); } catch {}
+    if (colPath) await evaluate(`${colPath}.setSymbol(${safeString(symbol)})`);
+    else if (apiPath) await evaluate(`${apiPath}.setSymbol(${safeString(symbol)})`);
+    const ready = await waitForChartReady(symbol);
+    if (!ready) throw new Error(`Chart did not switch to ${symbol} within timeout`);
+    await new Promise(r => setTimeout(r, 1500));
+    switched = true;
+  }
+
   let data;
   try {
     data = await evaluate(`
@@ -78,6 +100,16 @@ export async function getOhlcv({ count, summary } = {}) {
       })()
     `);
   } catch { data = null; }
+
+  if (switched && originalSymbol) {
+    try {
+      let colPath, apiPath;
+      try { colPath = await getChartCollection(); } catch {}
+      try { if (!colPath) apiPath = await getChartApi(); } catch {}
+      if (colPath) await evaluate(`${colPath}.setSymbol(${safeString(originalSymbol)})`);
+      else if (apiPath) await evaluate(`${apiPath}.setSymbol(${safeString(originalSymbol)})`);
+    } catch {}
+  }
 
   if (!data || !data.bars || data.bars.length === 0) {
     throw new Error('Could not extract OHLCV data. The chart may still be loading.');
@@ -483,7 +515,12 @@ export async function getFundamentals({ symbol } = {}) {
         'EPS_Diluted_TTM','Revenue_Annual','Net_Income_Annual','Total_Debt_Annual',
         'Dividends_Paid_Annual','EV_EBITDA','Return_on_Equity','Gross_Profit_Margin',
         'Net_Income_Margin','Current_Ratio_Annual','Debt_Ratio_Annual',
-        'earnings_release_date_fq','sector','industry','exchange','type','description'
+        'earnings_release_date_fq','sector','industry','exchange','type','description',
+        'Revenue_QoQ','Revenue_YoY','EPS_Diluted_YoY',
+        'Return_on_Assets','ROCE_TTM',
+        'Quick_Ratio_Annual','Debt_to_Equity',
+        'EPS_Estimate_FY1','Revenue_Estimate_FY1',
+        'dividend_yield_calc','dividends_per_share'
       ];
       var resp = await fetch(url, {
         method: 'POST',
@@ -505,7 +542,12 @@ export async function getFundamentals({ symbol } = {}) {
     'name','price','market_cap','pe_ratio','pb_ratio','eps_ttm',
     'revenue_annual','net_income_annual','total_debt','dividends_paid',
     'ev_ebitda','roe','gross_margin','net_margin','current_ratio',
-    'debt_ratio','next_earnings_date','sector','industry','exchange','type','description'
+    'debt_ratio','next_earnings_date','sector','industry','exchange','type','description',
+    'revenue_qoq','revenue_yoy','eps_diluted_yoy',
+    'roa','roce',
+    'quick_ratio','debt_to_equity',
+    'eps_estimate_fy1','revenue_estimate_fy1',
+    'dividend_yield','dividends_per_share'
   ];
   const fundamentals = {};
   keys.forEach((k, i) => { fundamentals[k] = row[i] ?? null; });
@@ -619,6 +661,294 @@ export async function getHoldings({ symbol } = {}) {
     },
     note: 'For ETF individual holdings composition, open the Holdings panel in TradingView and use data_get_holdings_detail (coming soon).',
   };
+}
+
+export async function screenStocks({ market = 'america', filters = [], sort_by = 'market_cap_calc', sort_order = 'desc', limit = 50, fields } = {}) {
+  const opMap = { gt: 'egreater', lt: 'eless', eq: 'equal', neq: 'nequal', between: 'in_range', not_between: 'not_in_range' };
+  const screenerFilters = (filters || []).map(f => ({
+    left: f.field,
+    operation: opMap[f.op] || f.op,
+    right: f.value,
+  }));
+  const defaultFields = ['name', 'close', 'change|1D', 'market_cap_calc', 'P.EARNINGS', 'Revenue_YoY', 'EPS_Diluted_YoY', 'sector', 'industry'];
+  const columns = fields && fields.length > 0 ? fields : defaultFields;
+  const rangeLimit = Math.min(limit || 50, 200);
+
+  const body = {
+    filter: screenerFilters,
+    sort: { sortBy: sort_by || 'market_cap_calc', sortOrder: sort_order || 'desc' },
+    range: [0, rangeLimit],
+    columns,
+    options: { lang: 'en' },
+  };
+  const bodyJson = JSON.stringify(body);
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+      var url = host + '/' + ${safeString(market)} + '/scan';
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: ${safeString(bodyJson)}
+      });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Screener request failed');
+
+  function toKey(col) {
+    return col.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '').toLowerCase();
+  }
+
+  const rows = result.data || [];
+  const stocks = rows.map(row => {
+    const obj = { symbol: row.s };
+    columns.forEach((col, i) => { obj[toKey(col)] = row.d?.[i] ?? null; });
+    return obj;
+  });
+
+  return { success: true, market, count: stocks.length, stocks };
+}
+
+export async function getFinancials({ symbol, period = 'both' } = {}) {
+  const sym = await evaluateAsync(`(${resolveSymbolExpr(symbol)})`);
+
+  const annualCols = [
+    'name', 'close', 'market_cap_calc',
+    'Revenue_Annual', 'Revenue_YoY', 'Gross_Profit_Annual', 'EBITDA_Annual',
+    'Net_Income_Annual', 'EPS_Diluted_FY', 'Operating_Expense_Annual',
+  ];
+  const quarterlyCols = [
+    'Revenue_FQ', 'Revenue_QoQ', 'Revenue_YoY',
+    'Gross_Profit_FQ', 'EBITDA_FQ', 'Net_Income_FQ', 'EPS_Diluted_FQ',
+  ];
+  const balanceCols = [
+    'Total_Assets_Annual', 'Total_Liabilities_Annual', 'Cash_F_Equiv_Annual',
+    'Long_LT_Debt_Annual', 'Total_Equity_Annual',
+  ];
+  const cashflowCols = [
+    'Free_Cash_Flow_TTM', 'Cash_From_Operations_Annual', 'CapEx_Annual',
+  ];
+  const ratioCols = [
+    'P.EARNINGS', 'P.SALES', 'Price_to_Book_ratio_FQ', 'EV_EBITDA',
+    'Return_on_Equity', 'Return_on_Assets', 'ROCE_TTM',
+    'Gross_Profit_Margin', 'Net_Income_Margin', 'Operating_Margin',
+    'Current_Ratio_Annual', 'Quick_Ratio_Annual', 'Debt_to_Equity', 'Debt_Ratio_Annual',
+  ];
+  const estimateCols = [
+    'EPS_Estimate_FY1', 'EPS_Estimate_FY2',
+    'Revenue_Estimate_FY1', 'Revenue_Estimate_FY2',
+    'earnings_release_date_fq',
+  ];
+
+  let columns;
+  if (period === 'annual') columns = [...annualCols, ...balanceCols, ...cashflowCols, ...ratioCols, ...estimateCols];
+  else if (period === 'quarterly') columns = ['name', 'close', 'market_cap_calc', ...quarterlyCols, ...ratioCols, ...estimateCols];
+  else columns = [...annualCols, ...quarterlyCols, ...balanceCols, ...cashflowCols, ...ratioCols, ...estimateCols];
+
+  const deduped = [...new Set(columns)];
+  const bodyJson = JSON.stringify({ symbols: { tickers: [sym] }, columns: deduped });
+  const market = screenerMarket(sym);
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+      var url = host + '/' + ${safeString(market)} + '/scan';
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: ${safeString(bodyJson)}
+      });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch financials');
+  const row = result.data?.[0]?.d;
+  if (!row) return { success: true, symbol: sym, financials: null, message: 'No financial data available for this symbol' };
+
+  const mapped = {};
+  deduped.forEach((col, i) => { mapped[col] = row[i] ?? null; });
+
+  const out = { success: true, symbol: sym, period };
+
+  if (period !== 'quarterly') {
+    out.income_annual = {
+      revenue: mapped['Revenue_Annual'],
+      revenue_yoy_pct: mapped['Revenue_YoY'],
+      gross_profit: mapped['Gross_Profit_Annual'],
+      ebitda: mapped['EBITDA_Annual'],
+      net_income: mapped['Net_Income_Annual'],
+      eps_diluted: mapped['EPS_Diluted_FY'],
+    };
+    out.balance_sheet = {
+      total_assets: mapped['Total_Assets_Annual'],
+      total_liabilities: mapped['Total_Liabilities_Annual'],
+      cash_equivalents: mapped['Cash_F_Equiv_Annual'],
+      long_term_debt: mapped['Long_LT_Debt_Annual'],
+      total_equity: mapped['Total_Equity_Annual'],
+    };
+    out.cash_flow = {
+      free_cash_flow_ttm: mapped['Free_Cash_Flow_TTM'],
+      operating_cash_flow: mapped['Cash_From_Operations_Annual'],
+      capex: mapped['CapEx_Annual'],
+    };
+  }
+
+  if (period !== 'annual') {
+    out.income_quarterly = {
+      revenue: mapped['Revenue_FQ'],
+      revenue_qoq_pct: mapped['Revenue_QoQ'],
+      revenue_yoy_pct: mapped['Revenue_YoY'],
+      gross_profit: mapped['Gross_Profit_FQ'],
+      ebitda: mapped['EBITDA_FQ'],
+      net_income: mapped['Net_Income_FQ'],
+      eps_diluted: mapped['EPS_Diluted_FQ'],
+    };
+  }
+
+  out.ratios = {
+    pe: mapped['P.EARNINGS'],
+    ps: mapped['P.SALES'],
+    pb: mapped['Price_to_Book_ratio_FQ'],
+    ev_ebitda: mapped['EV_EBITDA'],
+    roe: mapped['Return_on_Equity'],
+    roa: mapped['Return_on_Assets'],
+    roce: mapped['ROCE_TTM'],
+    gross_margin: mapped['Gross_Profit_Margin'],
+    net_margin: mapped['Net_Income_Margin'],
+    operating_margin: mapped['Operating_Margin'],
+    current_ratio: mapped['Current_Ratio_Annual'],
+    quick_ratio: mapped['Quick_Ratio_Annual'],
+    debt_to_equity: mapped['Debt_to_Equity'],
+    debt_ratio: mapped['Debt_Ratio_Annual'],
+  };
+
+  out.estimates = {
+    eps_fy1: mapped['EPS_Estimate_FY1'],
+    eps_fy2: mapped['EPS_Estimate_FY2'],
+    revenue_fy1: mapped['Revenue_Estimate_FY1'],
+    revenue_fy2: mapped['Revenue_Estimate_FY2'],
+    next_earnings_date: mapped['earnings_release_date_fq'],
+  };
+
+  return out;
+}
+
+export async function getEarningsCalendar({ from, to, market = 'america', limit = 100 } = {}) {
+  const fromDate = from || new Date().toISOString().split('T')[0];
+  const toDate = to || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const rangeLimit = Math.min(limit || 100, 200);
+
+  const columns = [
+    'name', 'close', 'market_cap_calc', 'earnings_release_date_fq',
+    'EPS_Estimate_FY1', 'Revenue_Estimate_FY1', 'EPS_Diluted_TTM',
+    'Revenue_Annual', 'sector', 'type',
+  ];
+  const body = {
+    filter: [
+      { left: 'earnings_release_date_fq', operation: 'in_range', right: [fromDate, toDate] },
+      { left: 'type', operation: 'equal', right: 'stock' },
+    ],
+    sort: { sortBy: 'market_cap_calc', sortOrder: 'desc' },
+    range: [0, rangeLimit],
+    columns,
+    options: { lang: 'en' },
+  };
+  const bodyJson = JSON.stringify(body);
+
+  const result = await evaluateAsync(`
+    (async function() {
+      var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+      var url = host + '/' + ${safeString(market)} + '/scan';
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: ${safeString(bodyJson)}
+      });
+      if (!resp.ok) return { error: 'HTTP ' + resp.status };
+      return await resp.json();
+    })()
+  `);
+
+  if (!result || result.error) throw new Error(result?.error || 'Failed to fetch earnings calendar');
+
+  const rows = result.data || [];
+  const reporters = rows.map(row => {
+    const [name, price, market_cap, earnings_date, eps_estimate, rev_estimate, eps_ttm, revenue_annual, sector] = row.d || [];
+    return {
+      symbol: row.s,
+      name,
+      price,
+      market_cap,
+      earnings_date,
+      eps_estimate_fy1: eps_estimate,
+      revenue_estimate_fy1: rev_estimate,
+      eps_ttm,
+      revenue_annual,
+      sector,
+    };
+  });
+
+  return { success: true, from: fromDate, to: toDate, market, count: reporters.length, reporters };
+}
+
+export async function getBulk({ symbols, fields } = {}) {
+  if (!symbols || symbols.length === 0) throw new Error('symbols array is required');
+  const tickers = symbols.slice(0, 50);
+
+  const defaultFields = [
+    'name', 'close', 'market_cap_calc', 'P.EARNINGS', 'EPS_Diluted_TTM',
+    'Revenue_Annual', 'Revenue_YoY', 'Net_Income_Margin', 'Return_on_Equity',
+    'earnings_release_date_fq', 'sector', 'industry', 'exchange',
+  ];
+  const columns = fields && fields.length > 0 ? fields : defaultFields;
+
+  const markets = [...new Set(tickers.map(s => screenerMarket(s)))];
+
+  const fetchForMarket = async (market, mTickers) => {
+    const bodyJson = JSON.stringify({ symbols: { tickers: mTickers }, columns });
+    return evaluateAsync(`
+      (async function() {
+        var host = window.SCREENER_HOST || 'https://scanner.tradingview.com';
+        var url = host + '/' + ${safeString(market)} + '/scan';
+        var resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: ${safeString(bodyJson)}
+        });
+        if (!resp.ok) return { error: 'HTTP ' + resp.status };
+        return await resp.json();
+      })()
+    `);
+  };
+
+  function toKey(col) {
+    return col.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '').toLowerCase();
+  }
+
+  const allRows = [];
+  for (const market of markets) {
+    const mTickers = tickers.filter(s => screenerMarket(s) === market);
+    const result = await fetchForMarket(market, mTickers);
+    if (result && !result.error && result.data) {
+      for (const row of result.data) {
+        const obj = { symbol: row.s };
+        columns.forEach((col, i) => { obj[toKey(col)] = row.d?.[i] ?? null; });
+        allRows.push(obj);
+      }
+    }
+  }
+
+  return { success: true, requested: tickers.length, returned: allRows.length, fields: columns.map(toKey), data: allRows };
 }
 
 export async function getNews({ symbol, count = 20 } = {}) {
