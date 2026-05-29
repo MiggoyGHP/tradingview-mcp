@@ -21,7 +21,7 @@ Contributions **must not** add features that:
 
 - **Connect directly to TradingView's servers** — all data access must go through the locally running Desktop app via CDP
 - **Bypass authentication or subscription restrictions** — this tool requires a valid TradingView account and subscription
-- **Scrape, cache, or redistribute market data** — no data storage, no databases, no export-to-CSV of price data
+- **Scrape data directly from TradingView's servers or redistribute it** — all data access must go through the locally running Desktop app; no bundled datasets, no redistribution. (Exporting data *you already have access to on your own chart* to local JSON/CSV files via `data_export_*` is in scope — it uses TradingView's own "Download chart data" feature and stays on your machine.)
 - **Enable automated trading or order execution** — this is a chart reading/development tool, not a trading bot framework
 - **Reverse-engineer or redistribute TradingView's proprietary code** — no bundled TradingView source, no charting library code
 - **Access other users' data** — private scripts, watchlists, or account information of others

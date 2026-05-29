@@ -59,6 +59,18 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100, max 500)
 - `quote_get` → single latest price snapshot for current chart symbol
 
+### "Export historical data → files (for dashboards)"
+Persist history to timestamped **JSON + CSV** files in `data_exports/` (or a caller `out_dir`). Tools return absolute file paths. See the `/data-export` skill for multi-symbol orchestration.
+
+- `data_export_chart` → **the reliable way to get historical price AND indicator series.** Drives TradingView's native "Download chart data", which writes time + OHLCV + EVERY visible indicator's full per-bar history (UNIX timestamps), aligned by bar.
+  - `{ symbol:"NASDAQ:AAPL", timeframe:"D", indicators:["Relative Strength Index","MACD"], formats:["json","csv"] }`
+  - **Indicators must be visible on the chart to appear as columns** — pass `indicators` (FULL names) to add them first.
+  - Default `engine:"native"`; auto-falls back to `engine:"api"` (fast, **price-only**, no UI) if the native download can't be captured — check the `note`/`fallback_reason` in the result.
+  - TradingView emits **duplicate column headers** (several `EMA`/`Plot`/`Shapes`); the JSON uniquifies them (`EMA`, `EMA_1`, …). Native export includes all *loaded* bars; `count` only bounds the API fallback.
+- `data_export_fundamentals` → multi-quarter financials via Pine `request.financial()`, written as **long-form** rows `{symbol, metric, period, value}`.
+  - `{ symbols:["NASDAQ:NOW","NYSE:CRM"], metrics:["revenue","net_income","fcf"], quarters:6 }`
+  - Symbols **must include an exchange prefix**. Compiles a Pine indicator + reads it back, so it takes several seconds (retries built in).
+
 ### "Analyze my chart" (full report workflow)
 1. `quote_get` → current price
 2. `data_get_study_values` → all indicator readings

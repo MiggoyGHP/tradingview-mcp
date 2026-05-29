@@ -27,7 +27,7 @@
     "tv": "node src/cli/index.js",
     "test": "node --test --test-timeout=60000 tests/e2e.test.js tests/pine_analyze.test.js",
     "test:e2e": "node --test --test-timeout=60000 tests/e2e.test.js",
-    "test:unit": "node --test tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js",
+    "test:unit": "node --test tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js tests/export.test.js",
     "test:cli": "node --test tests/cli.test.js",
     "test:all": "node --test --test-timeout=60000 tests/e2e.test.js tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/evaluate-filter.test.js",
     "audit": "npm audit --audit-level=high",

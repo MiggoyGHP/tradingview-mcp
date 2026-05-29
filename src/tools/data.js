@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/data.js';
+import * as exportCore from '../core/export.js';
 
 export function registerDataTools(server) {
   server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats. Pass symbol to fetch bars for any ticker (temporarily switches chart then restores).', {
@@ -84,6 +85,30 @@ export function registerDataTools(server) {
 
   server.tool('data_get_study_values', 'Get current indicator values from the data window for all visible studies (RSI, MACD, Bollinger Bands, EMAs, custom indicators with plot()).', {}, async () => {
     try { return jsonResult(await core.getStudyValues()); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_export_chart', 'Export HISTORICAL chart data to JSON + CSV files in data_exports/ — the reliable way to get historical price AND indicator series for dashboards. Default engine drives TradingView\'s native "Download chart data" which writes time + OHLCV + EVERY visible indicator\'s full per-bar history (UNIX timestamps), aligned by bar. Returns absolute file paths. Indicators must be visible on the chart to appear as columns — pass `indicators` (full names) to add them first. Falls back to a fast price-only API export if the native download fails.', {
+    symbol: z.string().optional().describe('Switch to this symbol before exporting (e.g. NASDAQ:AAPL, INDEX:SPX). Defaults to current chart symbol.'),
+    timeframe: z.string().optional().describe('Switch to this resolution before exporting (e.g. "1", "5", "60", "D", "W").'),
+    indicators: z.array(z.string()).optional().describe('Full indicator names to ADD before export so their columns appear (e.g. ["Relative Strength Index","MACD"]). Use full names, not abbreviations.'),
+    count: z.coerce.number().optional().describe('Bar count for the API fallback engine only (max 500). Native export includes all loaded bars.'),
+    engine: z.enum(['native', 'api']).optional().describe('"native" (default): TradingView CSV download = OHLCV + all indicators. "api": fast direct-bars, price only, no UI.'),
+    out_dir: z.string().optional().describe('Output directory (default: data_exports/ in the project root).'),
+    formats: z.array(z.enum(['json', 'csv'])).optional().describe('Which files to write (default both ["json","csv"]).'),
+  }, async ({ symbol, timeframe, indicators, count, engine, out_dir, formats }) => {
+    try { return jsonResult(await exportCore.exportChartData({ symbol, timeframe, indicators, count, engine, out_dir, formats })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_export_fundamentals', 'Export multi-quarter HISTORICAL fundamentals (revenue, net income, FCF, gross profit, EBITDA, EPS) to JSON + CSV files in data_exports/. Uses Pine request.financial() — the only way to get a quarterly time-series (the screener/snapshot APIs cannot). Output is long-form rows {symbol, metric, period, value}, dashboard-ready. Symbols MUST include an exchange prefix (e.g. "NASDAQ:NOW"). Compiles a Pine indicator on the chart and reads it back, so it takes several seconds.', {
+    symbols: z.array(z.string()).describe('Symbols WITH exchange prefix, e.g. ["NASDAQ:NOW","NYSE:CRM"].'),
+    metrics: z.array(z.string()).optional().describe('Friendly names (revenue, net_income, fcf, gross_profit, ebitda, eps) or raw Pine keys. Default: revenue, net_income, fcf.'),
+    quarters: z.coerce.number().int().min(1).max(12).optional().describe('Number of most-recent quarters (default 6).'),
+    out_dir: z.string().optional().describe('Output directory (default: data_exports/).'),
+    formats: z.array(z.enum(['json', 'csv'])).optional().describe('Which files to write (default both).'),
+  }, async ({ symbols, metrics, quarters, out_dir, formats }) => {
+    try { return jsonResult(await exportCore.exportFundamentals({ symbols, metrics, quarters, out_dir, formats })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
